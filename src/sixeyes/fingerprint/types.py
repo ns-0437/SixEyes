@@ -4,8 +4,8 @@ Everything here is safe to persist, log, and emit in a report: every field is a 
 count, or an offset. This is the boundary CLAUDE.md rule 3 draws -- nothing upstream of
 this module (see sixeyes.ingest.types) may cross it; everything at or downstream of it may.
 
-Two corrections from the original design, both driven by an independent review verified
-against primary sources and reproduced locally (2026-09-16):
+Corrections from the original design, all driven by independent review verified against
+primary sources and reproduced locally (2026-09-16, in two rounds):
 
 1. Anthropic's documented cache-prefix order is ``tools, system, messages`` -- model is a
    separate cache-*compatibility* dimension (different models can't share a cache entry at
@@ -19,6 +19,10 @@ against primary sources and reproduced locally (2026-09-16):
    typically `messages`, even when the actual cause was the system prompt disappearing.
    Independent per-segment chains can't suffer that misattribution: removing `system`
    changes only `system`'s own chain, never `messages`'s.
+3. Append-only growth tolerance applies only to `messages` (see `GROWTH_TOLERANT_SEGMENTS`)
+   -- a follow-up review found that appending new text to `system` or adding a `tool`
+   silently reported no change, because the first fix pass applied messages' legitimate
+   growth tolerance to every segment uniformly.
 """
 
 from __future__ import annotations
@@ -31,12 +35,30 @@ from sixeyes.core.ids import Digest
 
 SegmentKind = str  # "tools" | "system" | "messages" -- see fingerprint.fingerprint
 
+
+class IncomparableFingerprintsError(ValueError):
+    """Raised by `fingerprint.divergence.compare` when two fingerprints were produced
+    under different local keys. Their chains are not meaningfully comparable -- every
+    step would differ regardless of whether the underlying request changed at all -- so
+    reporting a divergence in that situation would misrepresent a key rotation as a
+    customer-content change. Fail closed and say so, rather than guess."""
+
 SEGMENT_ORDER: tuple[SegmentKind, ...] = ("tools", "system", "messages")
 """Anthropic's documented prompt-caching prefix order (verified against their live docs,
 2026-09-16): https://platform.claude.com/docs/en/build-with-claude/prompt-caching --
 "Cache prefixes are created in the following order: tools, system, then messages." A
 divergence in an earlier segment here is reported in preference to one in a later segment,
 because that's the order a real cache-breaking change actually happens in."""
+
+GROWTH_TOLERANT_SEGMENTS: frozenset[SegmentKind] = frozenset({"messages"})
+"""Only `messages` gets append-only growth treated as DivergenceKind.NONE. A 2026-09-16
+follow-up review correctly identified that the original code applied that tolerance to
+every segment uniformly -- so appending new instructions to `system`, or adding a `tool`,
+silently reported no change. `messages` has real evidentiary support for the tolerance
+(Anthropic explicitly documents that a growing conversation history keeps the cache warm);
+`tools` and `system` do not -- they are typically static configuration, and an append
+there is exactly the kind of change a customer needs surfaced, not hidden. Any difference
+in a non-growth-tolerant segment -- including a pure append -- is reported."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,13 +80,24 @@ class SegmentFingerprint:
 class RequestFingerprint:
     """A content-free fingerprint of one request, safe to cache, log, and compare.
 
-    `request_ref` is a one-way digest of the customer-supplied request id, not the id
-    itself -- an arbitrary customer-controlled string field is not safe to assume is
-    non-sensitive metadata (a request id is exactly the kind of field someone might, by
-    mistake or by convention, stuff a real identifier into).
+    `request_ref` is a *keyed* one-way reference to the customer-supplied request id, not
+    the id itself, and not merely an unkeyed hash of it -- an arbitrary customer-controlled
+    string field is not safe to assume is non-sensitive metadata (a request id is exactly
+    the kind of field someone might, by mistake or by convention, stuff a real identifier
+    into), and an *unkeyed* digest of a low-entropy identifier is dictionary-guessable the
+    same way an unkeyed chain step was (a 2026-09-16 follow-up review demonstrated exactly
+    that against the first, unkeyed version of this field).
+
+    `key_ref` is a content-free identifier of *which local key* produced this fingerprint
+    -- never the key itself, safe to compare and to put in a cache key, since it's derived
+    from 256 bits of local randomness rather than customer-supplied low-entropy content.
+    Two fingerprints computed under different keys are not meaningfully comparable (their
+    chains would differ regardless of whether the underlying request changed at all) --
+    see `fingerprint.divergence.compare`, which checks this before anything else.
     """
 
     request_ref: Digest
+    key_ref: Digest
     timestamp: float
     model_digest: Digest
     """Content-free digest of the model identifier. Compared for exact equality only --
@@ -73,7 +106,8 @@ class RequestFingerprint:
     """Exactly one entry per kind in SEGMENT_ORDER, in that order."""
 
     def content_key(self) -> Any:
-        return [self.request_ref, self.timestamp, self.model_digest, list(self.segments)]
+        return [self.request_ref, self.key_ref, self.timestamp, self.model_digest,
+                list(self.segments)]
 
     def segment(self, kind: SegmentKind) -> SegmentFingerprint:
         for seg in self.segments:

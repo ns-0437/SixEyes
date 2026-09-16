@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import hmac
 
+import pytest
+
 from sixeyes.fingerprint.divergence import compare
 from sixeyes.fingerprint.fingerprint import fingerprint_request
 from sixeyes.fingerprint.types import DivergenceKind
@@ -268,3 +270,79 @@ def test_exported_chain_resists_per_word_dictionary_recovery() -> None:
         == target_digest
     ]
     assert recovered_wrong_key == []
+
+
+# ---------------------------------------------------------------------------------------
+# Follow-up round (independent review, 2026-09-16): the first fix pass held up under the
+# original 13 reproductions but missed these three. Ported here the same way, as permanent
+# regressions rather than one-off external files.
+# ---------------------------------------------------------------------------------------
+
+
+def test_appending_system_text_is_reported_not_silently_ignored() -> None:
+    """Regression: growth tolerance was applied to every segment uniformly in the first
+    fix pass, so "Be helpful" -> "Be helpful always" fingerprinted as DivergenceKind.NONE.
+    Only `messages` has evidentiary support for append-only growth being safe (see
+    GROWTH_TOLERANT_SEGMENTS); `system` does not, and this must be reported."""
+    previous = _fp(system="Be helpful")
+    current = _fp(system="Be helpful always")
+    assert compare("wl_1", previous, current).kind is DivergenceKind.SYSTEM_CHANGED
+
+
+def test_adding_a_tool_to_an_empty_list_is_reported() -> None:
+    """Same bug, the empty-to-nonempty edge of it: a previously-empty tools list gaining a
+    tool also fingerprinted as NONE under the old uniform growth tolerance."""
+    previous = _fp(tools=())
+    current = _fp(tools=(RawToolDef("search", "search", "{}"),))
+    assert compare("wl_1", previous, current).kind is DivergenceKind.TOOLS_CHANGED
+
+
+def test_request_ref_resists_dictionary_guessing_without_the_key() -> None:
+    """Regression: the original request_ref fix (test above) replaced plaintext with an
+    *unkeyed* content_hash("request_id", id) -- which reintroduced exactly the class of
+    guessing exposure per-step HMAC chaining exists to prevent, just against a different
+    field. A confirmed follow-up attack recovered a synthetic identifier this way. Fixed
+    by HMAC-keying request_ref the same way segment chains are keyed."""
+    from sixeyes.core.ids import content_hash
+
+    fp = _fp(request_id="synthetic-patient-alice")
+    candidates = ("synthetic-patient-bob", "synthetic-patient-alice", "synthetic-patient-carol")
+
+    # the old, since-fixed unkeyed construction would have matched here
+    recovered_unkeyed = [c for c in candidates if content_hash("request_id", c) == fp.request_ref]
+    assert recovered_unkeyed == []
+
+    # the actual current construction (HMAC, keyed) without the key also fails to match
+    from sixeyes.fingerprint.fingerprint import _keyed_request_ref
+
+    wrong_key = b"\x99" * 32
+    recovered_wrong_key = [c for c in candidates if _keyed_request_ref(wrong_key, c) == fp.request_ref]
+    assert recovered_wrong_key == []
+
+    # and with the RIGHT key, it does match its own id (sanity check the construction
+    # is actually deterministic and usable, not just unguessable)
+    assert _keyed_request_ref(TEST_KEY, "synthetic-patient-alice") == fp.request_ref
+
+
+def test_key_ref_distinguishes_fingerprints_from_different_keys() -> None:
+    """Regression: RequestFingerprint previously carried no identifier of which key
+    produced it, so a cache keyed only on "was an explicit key given" (not which one)
+    served key A's fingerprints back under key B. key_ref is a content-free identifier of
+    the key itself (safe to compare/cache since a key is 256 bits of local randomness, not
+    guessable customer content) -- different keys must produce different key_ref values."""
+    a = fingerprint_request(_request(), TEST_KEY)
+    b = fingerprint_request(_request(), b"\x02" * 32)
+    assert a.key_ref != b.key_ref
+
+
+def test_comparing_fingerprints_from_different_keys_raises() -> None:
+    """Regression: comparing two fingerprints computed under different keys previously
+    reported a spurious content change (every chain step differs when the key differs,
+    regardless of the underlying request) -- a key rotation should never be misreported as
+    a customer-content change. Fail closed with an explicit error instead."""
+    from sixeyes.fingerprint.types import IncomparableFingerprintsError
+
+    previous = fingerprint_request(_request(), TEST_KEY)
+    current = fingerprint_request(_request(), b"\x02" * 32)
+    with pytest.raises(IncomparableFingerprintsError):
+        compare("wl_1", previous, current)
