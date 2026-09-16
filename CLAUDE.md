@@ -6,9 +6,20 @@ product failure, not a style disagreement.
 ## What this is
 
 SixEyes is a **read-only forensic analyzer for agentic LLM waste**. It ingests execution
-traces, finds spend that is recoverable **with zero change to model behaviour**, localises
-the exact cause, and prescribes the fix. Opening capability: prompt-cache hit-rate
-engineering. It is not a gateway, not a proxy, not a router.
+traces, diagnoses recoverable spend, localises the exact cause, and prescribes a fix — without
+modifying production requests. Opening capability: prompt-cache hit-rate engineering. It is
+not a gateway, not a proxy, not a router.
+
+**Competitive reality, checked 2026-09-16:** Anthropic ships a native `cache-diagnosis` beta
+API that fingerprints consecutive requests and reports the exact divergence point
+(`model_changed` / `system_changed` / `tools_changed` / `messages_changed`), content-free,
+for free, at the source. Single-provider, single-request-pair cache-divergence detection is
+therefore not a defensible starting claim — a customer can read it off the response object
+today. What is *not* covered by any provider-native feature: cross-provider aggregation (a
+customer running Claude + OpenAI + Gemini has no unified view), fleet-level dollar-prioritized
+reporting over time, and the non-cache waste categories (redundant tool calls, re-sent
+context, retry burn). That narrower, honest claim is what this project is actually testing —
+see `docs/PHASES.md` for the standing note and the validation plan built around it.
 
 **North-star metric:** recoverable input cost, verified after the customer ships the fix.
 
@@ -16,12 +27,26 @@ engineering. It is not a gateway, not a proxy, not a router.
 
 ## The 12 rules
 
-**1. Quality-neutral first, always.**
-We only ship optimisations that produce byte-identical model behaviour until real eval
-infrastructure exists. Prompt-cache hits, deduplicated context, eliminated redundant calls.
-The moment a capability trades quality for cost, it goes behind an eval gate or it does not
-ship. This is the reason we can sell without an eval set, and it is our single biggest
-structural advantage. Do not spend it casually.
+**1. Diagnose without modifying production; never claim more than that proves.**
+SixEyes reads traces and reports findings — it never changes a request in flight. That
+boundary is real and defensible. What is *not* true, and must never be claimed as true, is
+that applying a recommended fix is guaranteed to preserve model behaviour: identical requests
+do not guarantee identical generated output, and reordering a tool array or moving a
+timestamp to fix a cache miss is a change to what the model sees, not a provably inert one.
+Detection is deterministic (rule 2). Whether a specific *applied* fix preserved the
+customer's output quality is a separate, unproven claim until it is checked — do not let the
+two blur together in code, in docs, or in front of a customer. Every finding and every
+reported number carries one of four confidence tiers (`core.types.Confidence`) and is labelled
+accordingly, everywhere it's shown:
+- `MEASURED` — a before/after verification row exists across a real customer deploy. The
+  only tier allowed to be called a "result."
+- `DERIVED` — exact arithmetic on observed tokens and a dated price table. Call it a
+  calculation, not a result.
+- `ESTIMATED` — modelled from a sample or heuristic. Always say "estimated."
+- `SPECULATIVE` — advisory only (remediation prose). Never aggregated into a total, never
+  presented as a number a customer can bill against.
+A capability that trades quality for cost without a way to check the trade ships behind an
+eval gate, or it does not ship.
 
 **2. Determinism is the product.**
 Detection is a pure function of the trace. Same input, same findings, forever. No LLM is
@@ -50,10 +75,10 @@ A `Finding` without (a) machine-checkable evidence, (b) a concrete remediation, 
 render in reports.
 
 **6. Never claim savings without a verification row.**
-Estimates are labelled estimates. Only a before/after measurement across a customer deploy
-becomes a claim. The `verification` table is the marketing department and the only asset
-that compounds. Fabricated or extrapolated savings numbers are an existential credibility
-risk in a market full of vendors quoting listicles.
+Only `Confidence.MEASURED` (rule 1) — a before/after measurement across a real customer
+deploy — becomes a claim. The `verification` table is the marketing department and the only
+asset that compounds. Fabricated or extrapolated savings numbers are an existential
+credibility risk in a market full of vendors quoting listicles.
 
 **7. Money is a type, never a float.**
 `Money` holds integer micro-USD. No `float` dollars anywhere — not in the model, not in
