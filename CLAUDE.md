@@ -56,9 +56,13 @@ graph/executor.py forces `tainted=True` on every Finding a tainted node's output
 whether or not the node called `ctx.certify`), not opt-in convention. An independent
 review (2026-09-16) found that omitting `ctx.certify` was sufficient to bypass the
 advertised boundary; `ctx.certify` remains useful for a clean path (proper provenance,
-loud in-code failure on misuse) but was never itself the safety mechanism. If you find
-yourself reaching for a model to decide whether something is waste, you have misunderstood
-the product.
+loud in-code failure on misuse) but was never itself the safety mechanism. `_detaint`
+walks a fixed whitelist of container shapes (`Finding`, `FindingSet`, `tuple`, `list`,
+`dict` values) — a follow-up review found `dict` missing, so a STOCHASTIC node returning
+`{"finding": ...}` passed through untouched. A node wrapping a Finding in anything outside
+that whitelist is not covered and must not be done without extending `_detaint` to match;
+this is a deliberate whitelist, not a generic object walker. If you find yourself reaching
+for a model to decide whether something is waste, you have misunderstood the product.
 
 **3. Content-free by construction.**
 We never store, transmit, or log raw prompt text, completions, tool arguments, or document
@@ -77,7 +81,34 @@ content-bearing input is itself treated as content-bearing (`Graph.content_beari
 unless it explicitly sets `declassifies = True` — a reviewed, auditable claim, not a
 default any node gets by omission. The same review found the opposite (declared-only,
 non-propagating) design let a plain passthrough node persist raw content to disk simply by
-never setting a flag. `Fingerprint` is presently the only node that declassifies.
+never setting a flag. `Fingerprint` is presently the only node that declassifies. A
+**declassifying node's own errors are still redacted**, separately from its output
+classification — a follow-up review (2026-09-16) found that a declassifier failing
+mid-execution embedded its raw *input* (still in scope while running, before it produces
+its genuinely content-free output) in the exception message, and that message was NOT
+redacted, because redaction keyed off the node's output classification, not its input.
+The executor now redacts based on whether a node's *input* is content-bearing, which is a
+different question from whether its *output* is.
+
+Structural growth tolerance is scoped to `messages` only. Only a growing conversation
+history has real evidentiary support for "this is safe" (Anthropic documents it
+explicitly); `tools` and `system` are typically static configuration, and any difference
+there — including a pure append, like a new instruction added to a system prompt or a
+tool added to an empty list — is reported, not silently treated as growth. A first fix
+pass applied the growth tolerance to every segment uniformly; a follow-up review caught
+that appending to `system` or `tools` silently reported no change.
+
+Every identifier that leaves this boundary is **keyed**, not merely hashed. A customer
+request id is exactly the kind of low-entropy, customer-controlled field someone might
+put a real identifier into — an *unkeyed* digest of it is dictionary-guessable the same
+way an unkeyed chain step was, which a follow-up review demonstrated by recovering a
+synthetic identifier from an unkeyed `request_ref`. Fixed by HMAC-keying it the same way
+segment chains are keyed. The key itself is versioned via a content-free `key_ref` on
+every `RequestFingerprint`, so a cache never serves fingerprints computed under one key
+back under a different one, and comparing two fingerprints from different keys raises
+`IncomparableFingerprintsError` rather than misreporting a key rotation as a content
+change — a first fix pass keyed the chain but left the cache key and the comparison
+function both blind to *which* key was used.
 
 A change that puts customer content into a payload is rejected on sight, no matter how
 useful. Our pitch is "we never see your prompts, we see the shape of them" — that sentence

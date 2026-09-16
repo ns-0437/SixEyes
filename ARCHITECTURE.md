@@ -33,13 +33,14 @@ refuses to certify the result regardless of what the node itself does.
 
 `RESIDENT` vs ephemeral is the distinction from the reference architecture: resident nodes
 own long-lived state (indexes, baselines) and are addressed by identity; ephemeral nodes are
-constructed per run and are addressed by content. A `RESIDENT` node's cache key is
-structural (node identity), computed once before any node executes -- it cannot reflect
-that the node's *actual output* may differ between two separate `Executor.run()` calls
-sharing one cache. `Graph.cache_unsafe_nodes()` therefore excludes `RESIDENT` nodes and
-everything downstream of them from caching entirely, rather than risk serving a stale
-result; a real fix (cache keys that incorporate a RESIDENT node's actual output) is not
-yet built.
+constructed per run and are addressed by content. Both `RESIDENT` and `STOCHASTIC` nodes'
+cache keys are structural (node identity), computed once before any node executes -- that
+key cannot reflect that either kind's *actual output* may differ between two separate
+`Executor.run()` calls sharing one cache. `Graph.cache_unsafe_nodes()` therefore excludes
+both kinds, and everything downstream of either, from caching entirely, rather than risk
+serving a stale result -- a first fix pass covered only `RESIDENT`; a follow-up review
+demonstrated the identical bug for a `PURE` node downstream of `STOCHASTIC`. A real fix
+(cache keys that incorporate a node's actual runtime output) is not yet built.
 
 **Content-bearing propagation.** Orthogonal to `NodeKind`: a node's *effective*
 content-bearing status (`Graph.content_bearing_nodes()`) is its own declared

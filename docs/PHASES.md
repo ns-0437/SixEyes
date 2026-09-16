@@ -79,10 +79,32 @@ logic built on top of it — near-term, not blocking, and not to be silently for
 the same review: that swap is an assumption, not yet a tested one — treat "drop-in" as a
 claim to verify when it actually happens, not before.
 
+**Follow-up review, 2026-09-16 — same day, 10 more found, all fixed.** Verifying the fixes
+above surfaced seven further gaps (10 written regressions): structural growth-tolerance
+applied to every segment uniformly, so appending new `system` text or a `tool` silently
+reported no change (now scoped to `messages` only — the only segment with real evidentiary
+support for the tolerance, see `GROWTH_TOLERANT_SEGMENTS`); the HMAC key had no identity of
+its own, so a cache didn't distinguish fingerprints computed under different keys, and
+`fingerprint.keys`'s check-then-write had a real race between two concurrent first-use
+callers (fixed with `key_ref`, an `IncomparableFingerprintsError` on mismatched keys, and
+an O_EXCL lock file plus atomic install); the fix for unkeyed chain hashing didn't extend
+to `request_ref`, which was still an unkeyed digest and still dictionary-guessable (now
+HMAC-keyed the same way); a declassifying node's own execution errors weren't redacted,
+because redaction keyed off output classification rather than input (a declassifier still
+handles raw input while running, before producing its content-free output); `_detaint`'s
+container whitelist was missing `dict`, so `{"finding": ...}` from a STOCHASTIC node
+bypassed certification; the RESIDENT-descendant cache-staleness fix didn't extend to
+STOCHASTIC, which has the identical problem; and `JsonlSource.config_key()` and `execute()`
+read the file independently, so an edit landing between the two reads could bind a
+downstream cache entry to content that was never actually parsed (fixed by sharing exactly
+one read per run — see `JsonlSource._read_snapshot`). All 10 are now permanent tests
+(`test_fingerprint.py`, `test_taint.py`, `test_content_boundary.py`, `test_graph_cache.py`,
+`test_ingest_pipeline_integration.py`, `test_fingerprint_keys.py`).
+
 **Still open for this phase:** OTel GenAI semconv reader, native Anthropic/OpenAI SDK
-adapters, real-tokenizer swap-in above, a real fix for RESIDENT-descendant cache staleness
-(current fix is the safe-but-conservative "never cache it" rather than a cache key that
-incorporates actual runtime output).
+adapters, real-tokenizer swap-in above, a real fix for RESIDENT/STOCHASTIC-descendant cache
+staleness (current fix is the safe-but-conservative "never cache it" rather than a cache
+key that incorporates actual runtime output).
 
 ## Phase 3 — Detectors
 
