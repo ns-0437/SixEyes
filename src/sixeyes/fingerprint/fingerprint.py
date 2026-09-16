@@ -23,6 +23,36 @@ from sixeyes.ingest.types import RawRequest, RawTrace
 _HMAC_DIGEST = "sha256"
 
 
+def _resolve_key(config: dict[str, Any]) -> bytes:
+    """The single place execute() and config_key() both resolve a key from -- so a cache
+    key computed ahead of a run and the key actually used to fingerprint agree, and an
+    explicit key vs. the local default key are never silently conflated."""
+    explicit = config.get("key")
+    return explicit if explicit is not None else load_or_create_key()
+
+
+def _key_ref(key: bytes) -> Digest:
+    """A content-free identifier of *which* key was used -- never the key itself. Unkeyed
+    hashing is safe here specifically because a key is 256 bits of local randomness, not
+    customer-supplied content: there is no low-entropy dictionary to guess against, unlike
+    `request_ref` below (see its keyed construction) or the original, since-fixed chain
+    weakness this whole module exists to avoid repeating."""
+    return content_hash("sixeyes.fingerprint.key_ref.v1", key)
+
+
+def _keyed_request_ref(key: bytes, request_id: str) -> Digest:
+    """A keyed reference to a customer-supplied request id.
+
+    An independent review (2026-09-16, follow-up round) demonstrated that the previous
+    construction -- an *unkeyed* `content_hash("request_id", request_id)` -- was itself
+    dictionary-guessable against a low-entropy id, the exact class of bug per-step HMAC
+    chaining was built to close, just reintroduced through a different field. HMAC-keying
+    this reference the same way closes it here too.
+    """
+    msg = b"sixeyes.fingerprint.request_ref.v1:" + canonical_bytes(request_id)
+    return Digest(hmac.new(key, msg, _HMAC_DIGEST).hexdigest())
+
+
 def _chain_seed(key: bytes, segment_kind: str) -> bytes:
     return hmac.new(key, b"sixeyes.fingerprint.chain.v1:" + segment_kind.encode(), _HMAC_DIGEST).digest()
 
@@ -102,7 +132,8 @@ def fingerprint_request(request: RawRequest, key: bytes) -> RequestFingerprint:
             SegmentFingerprint(kind=kind, unit_count=len(units), chain=_hash_chain(key, kind, units))
         )
     return RequestFingerprint(
-        request_ref=content_hash("request_id", request.request_id),
+        request_ref=_keyed_request_ref(key, request.request_id),
+        key_ref=_key_ref(key),
         timestamp=request.timestamp,
         model_digest=content_hash("model", request.model),
         segments=tuple(segments),
@@ -119,7 +150,7 @@ class Fingerprint(Node):
     """
 
     kind = NodeKind.PURE
-    version = "2"
+    version = "3"
     inputs: ClassVar[dict[str, type]] = {"trace": RawTrace}
     output = tuple
     content_bearing = False
@@ -127,14 +158,17 @@ class Fingerprint(Node):
 
     async def execute(self, ctx: RunContext, **inputs: Any) -> tuple[RequestFingerprint, ...]:
         trace: RawTrace = inputs["trace"]
-        key = self.config.get("key") or load_or_create_key()
+        key = _resolve_key(self.config)
         fingerprints = tuple(fingerprint_request(r, key) for r in trace.requests)
         ctx.log("fingerprinted %d requests, content-free", len(fingerprints))
         return fingerprints
 
     def config_key(self) -> Any:
         # The key itself must never enter a cache key (that would put secret bytes into a
-        # value used to name files on disk) -- only *whether* an explicit key was provided
-        # affects the key. Since load_or_create_key() is stable across calls on one
-        # machine, omitting it from the cache key does not create staleness in practice.
-        return {"has_explicit_key": "key" in self.config}
+        # value used to name files on disk). key_ref is a content-free *identifier* of the
+        # key, not the key -- distinguishing "processed under key A" from "processed under
+        # key B" in the cache, which the previous has_explicit_key boolean could not do:
+        # two different explicit keys both reported True and collided in the cache,
+        # serving key A's fingerprints back under key B (an independent review's follow-up
+        # regression demonstrated this directly).
+        return {"key_ref": _key_ref(_resolve_key(self.config))}
