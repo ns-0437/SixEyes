@@ -101,10 +101,34 @@ one read per run — see `JsonlSource._read_snapshot`). All 10 are now permanent
 (`test_fingerprint.py`, `test_taint.py`, `test_content_boundary.py`, `test_graph_cache.py`,
 `test_ingest_pipeline_integration.py`, `test_fingerprint_keys.py`).
 
+**Third-round review, 2026-09-16 — same day again, 3 more found, all fixed.** Verifying
+the follow-up round's fixes surfaced three more, two of them in the fixes themselves:
+`JsonlSource`'s own snapshot fix from the follow-up round left a gap where a forced
+refresh that failed with `FileNotFoundError` never invalidated the old attribute, so
+deleting the input file after a successful run made the next run silently replay the
+stale trace instead of failing; `Fingerprint`'s `config_key()` and `execute()` still each
+resolved the default local key independently, so a key rotated in between left the node's
+cache identity and its actual fingerprint output computed under different keys; and
+editing the *last* message in a conversation (`"hello"` → `"hello extra instructions"`,
+no new message added) was indistinguishable from appending a genuinely new turn, because
+nothing marked where a message's content chain was supposed to end. Fixed respectively
+with `RunScoped` (`graph/run_scoped.py`, a new shared primitive — see `ARCHITECTURE.md`),
+the same `RunScoped` applied to `Fingerprint`'s key resolution, and an explicit
+`("message_end", role)` unit closing each message (`Fingerprint` bumped to version 5).
+All 3 are permanent tests (`test_run_scoped.py`, `test_ingest_pipeline_integration.py`,
+`test_fingerprint.py`), plus one combined end-to-end test exercising all three fixes
+together across a realistic multi-run sequence.
+
 **Still open for this phase:** OTel GenAI semconv reader, native Anthropic/OpenAI SDK
 adapters, real-tokenizer swap-in above, a real fix for RESIDENT/STOCHASTIC-descendant cache
 staleness (current fix is the safe-but-conservative "never cache it" rather than a cache
 key that incorporates actual runtime output).
+
+**Pattern across three review rounds, worth naming rather than repeating silently:** each
+round's fixes were correct on their own terms and still left a gap an adversarial re-read
+found immediately -- the review process is doing real work here, and there is no
+particular reason to assume a fourth pass would find nothing. Treat "verified" as "verified
+against what's been checked so far," not "complete," until a review comes back clean.
 
 ## Phase 3 — Detectors
 
