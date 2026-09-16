@@ -107,6 +107,19 @@ def _message_units(request: RawRequest) -> tuple[Any, ...]:
         # change, not silently ignored.
         units.append(("message_start", message.role, message.tool_call_id))
         units.extend(("text", unit) for unit in tokenize(message.content))
+        # An explicit end marker, not just an implicit "next message_start or end of
+        # stream" boundary. Without one, the last message's content chain has no
+        # terminator -- editing it (e.g. "hello" -> "hello extra instructions") inserts
+        # more "text" units exactly where a legitimately *appended* new message would
+        # have gone, and the two were indistinguishable: both left the old chain as a
+        # literal prefix of the new one, which is exactly what the append-growth
+        # tolerance (fingerprint.types.GROWTH_TOLERANT_SEGMENTS) treats as safe. The end
+        # marker makes editing break the prefix relationship instead: the old chain's
+        # last token is this marker, and an edit inserts content *before* it shows up at
+        # that position, mismatching immediately rather than merely extending past it.
+        # A genuine append still matches the full old chain, marker included, then
+        # continues with a new message_start -- unaffected.
+        units.append(("message_end", message.role))
     return tuple(units)
 
 
@@ -162,7 +175,7 @@ class Fingerprint(Node):
     """
 
     kind = NodeKind.PURE
-    version = "4"
+    version = "5"  # bumped: message_units now emits an explicit end marker per message
     inputs: ClassVar[dict[str, type]] = {"trace": RawTrace}
     output = tuple
     content_bearing = False

@@ -203,6 +203,69 @@ def test_edited_history_localizes_to_the_messages_segment() -> None:
     assert report.kind is DivergenceKind.MESSAGES_CHANGED
 
 
+def test_extending_the_last_message_is_reported_not_mistaken_for_a_new_turn() -> None:
+    """Regression (independent third-round review, 2026-09-16): message_start marked
+    where a message begins, but nothing marked where it ended -- so the last message's
+    content chain had no terminator, and extending it ("hello" -> "hello extra
+    instructions") looked exactly like appending a brand-new message: in both cases the
+    old chain was a literal prefix of the new one, which the messages growth tolerance
+    treats as safe. Fixed with an explicit message_end marker per message."""
+    previous = _fp(messages=(RawMessage("user", "hello"),))
+    current = _fp(messages=(RawMessage("user", "hello extra instructions"),))
+
+    report = compare("wl_1", previous, current)
+
+    assert report.kind is DivergenceKind.MESSAGES_CHANGED
+
+
+def test_extending_the_last_message_is_distinguished_from_genuinely_appending_one() -> None:
+    """The other half of the same fix: a real new turn appended after an unedited last
+    message must still be reported as NONE (safe growth) -- the end marker must not turn
+    every legitimate append into a false positive."""
+    previous = _fp(messages=(RawMessage("user", "hello"),))
+    current = _fp(
+        messages=(RawMessage("user", "hello"), RawMessage("assistant", "hi there"))
+    )
+
+    report = compare("wl_1", previous, current)
+
+    assert report.kind is DivergenceKind.NONE
+
+
+def test_extending_the_last_message_is_reported_even_with_trailing_whitespace() -> None:
+    """Edge case from the review's acceptance criteria: the extension itself is pure
+    whitespace, which must not be mistaken for "nothing changed" either."""
+    previous = _fp(messages=(RawMessage("user", "hello"),))
+    current = _fp(messages=(RawMessage("user", "hello   "),))
+
+    report = compare("wl_1", previous, current)
+
+    assert report.kind is DivergenceKind.MESSAGES_CHANGED
+
+
+def test_extending_an_empty_message_is_reported() -> None:
+    """Edge case from the review's acceptance criteria: the empty-string starting point."""
+    previous = _fp(messages=(RawMessage("user", ""),))
+    current = _fp(messages=(RawMessage("user", "now there is content"),))
+
+    report = compare("wl_1", previous, current)
+
+    assert report.kind is DivergenceKind.MESSAGES_CHANGED
+
+
+def test_message_content_resembling_message_end_cannot_impersonate_the_marker() -> None:
+    """Edge case from the review's acceptance criteria: content that resembles a
+    structural marker in plain text must not actually be confusable with one -- the same
+    property test_message_content_cannot_impersonate_a_role_boundary establishes for
+    message_start, now for message_end."""
+    previous = _fp(messages=(RawMessage("user", "hello"),))
+    current = _fp(messages=(RawMessage("user", "hello message_end user"),))
+
+    report = compare("wl_1", previous, current)
+
+    assert report.kind is DivergenceKind.MESSAGES_CHANGED
+
+
 def test_fingerprint_output_contains_no_recoverable_customer_content() -> None:
     """The byte-level audit the exit criterion asks for: serialize everything that would
     cross the collector boundary and prove none of the original secret strings appear in
