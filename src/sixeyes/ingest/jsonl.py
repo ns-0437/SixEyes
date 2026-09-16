@@ -130,22 +130,47 @@ class JsonlSource(Node):
 
     Config: `path` (str | Path), `workload_id` (str, defaults to the file stem).
 
-    The file is read twice per execution attempt (once for the cache-key digest in
-    `config_key`, once to actually parse in `execute`) -- a deliberate simplicity-over-
-    throughput tradeoff for now (CLAUDE.md rule 9); worth a `ctx.scratch`-cached read if a
-    real workload's file sizes make it matter.
+    `config_key()` and `execute()` share exactly one read of the file, taken whichever of
+    the two runs first (in the normal `Executor.run()` flow, always `config_key()`, since
+    `Graph.cache_keys()` computes every node's key before any node executes) and cached on
+    the instance. A 2026-09-16 follow-up review demonstrated why they must: with two
+    independent reads, a file edited between them let the cache-key digest (from read #1)
+    and the actually-parsed content (from read #2) disagree -- a downstream node's cache
+    key ended up bound to content it never actually processed, so a later run whose first
+    read happened to match read #1 again served that stale, mismatched result back. One
+    shared snapshot makes the key and the parsed content provably describe the same bytes.
     """
 
     kind = NodeKind.SOURCE
-    version = "1"
+    version = "2"
     inputs: ClassVar[dict[str, type]] = {}
     output = RawTrace
     content_bearing = True
 
+    def __init__(self, node_id: str, **config: Any) -> None:
+        super().__init__(node_id, **config)
+        self._snapshot: tuple[Any, bytes] | None = None  # (digest, raw file bytes)
+
+    def _read_snapshot(self, *, force: bool = False) -> tuple[Any, bytes]:
+        """`force=True` (used only by `config_key`) always re-reads: a node instance can
+        be reused across multiple separate `Executor.run()` calls sharing one Graph (a
+        normal, supported pattern -- several tests do exactly this), and each such run
+        needs its own fresh read, not the previous run's cached one. `config_key()` is
+        guaranteed to run exactly once, near the very start of every `Executor.run()`
+        (via `Graph.cache_keys()`, which completes before any node's `execute()` begins),
+        so calling it with `force=True` there and leaving `execute()`'s default reuse-if-set
+        behaviour gives each run exactly one fresh read, shared between the two."""
+        if force or self._snapshot is None:
+            path = Path(self.config["path"])
+            data = path.read_bytes()
+            self._snapshot = (hash_bytes(data), data)
+        return self._snapshot
+
     async def execute(self, ctx: RunContext, **_: object) -> RawTrace:
         path = Path(self.config["path"])
         workload_id = self.config.get("workload_id", path.stem)
-        text = path.read_text(encoding="utf-8")
+        _, data = self._read_snapshot()
+        text = data.decode("utf-8")
         trace = parse_jsonl(text, workload_id=str(workload_id))
         ctx.log("parsed %d requests from %s", len(trace.requests), path.name)
         return trace
@@ -162,7 +187,7 @@ class JsonlSource(Node):
         # test against -- it is one opaque digest of the whole file, not a chain.
         path = Path(self.config["path"])
         try:
-            digest = hash_bytes(path.read_bytes())
+            digest, _ = self._read_snapshot(force=True)
         except FileNotFoundError:
             digest = None
         return {"path": str(path), "workload_id": self.config.get("workload_id"), "content_digest": digest}

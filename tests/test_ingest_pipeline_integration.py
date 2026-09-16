@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
-from sixeyes.core.ids import content_hash
 from sixeyes.fingerprint.divergence import Divergence
-from sixeyes.fingerprint.fingerprint import Fingerprint
+from sixeyes.fingerprint.fingerprint import Fingerprint, _keyed_request_ref, fingerprint_request
 from sixeyes.fingerprint.types import DivergenceKind
 from sixeyes.graph import DiskCache, Executor, Graph
 from sixeyes.ingest.jsonl import JsonlSource
@@ -38,8 +38,8 @@ async def test_full_pipeline_localizes_the_fixtures_injected_timestamp(tmp_path:
     reports = result["divergence"]
     assert len(reports) == 1
     assert reports[0].kind is DivergenceKind.SYSTEM_CHANGED
-    assert reports[0].previous_request_ref == content_hash("request_id", "req_1")
-    assert reports[0].request_ref == content_hash("request_id", "req_2")
+    assert reports[0].previous_request_ref == _keyed_request_ref(TEST_KEY, "req_1")
+    assert reports[0].request_ref == _keyed_request_ref(TEST_KEY, "req_2")
 
 
 async def test_pipeline_manifest_shows_only_the_source_as_content_bearing(tmp_path: Path) -> None:
@@ -79,7 +79,7 @@ async def test_pipeline_is_incremental_when_only_divergence_changes(tmp_path: Pa
     assert calls["fingerprint"] == 1
 
     class DivergenceV2(Divergence):
-        version = "3"  # Divergence's own base version is "2" after the 2026-09-16 fixes
+        version = "4"  # Divergence's own base version is "3" after the 2026-09-16 fixes
 
     graph_v2 = Graph("p2")
     graph_v2.add(JsonlSource("source", path=str(FIXTURE), workload_id="wl_sample"))
@@ -123,3 +123,50 @@ async def test_changed_file_with_preserved_mtime_still_invalidates_the_fingerpri
 
     assert second["source"].requests[0].system == "bravo"
     assert first["fingerprint"][0].segment("system").chain != second["fingerprint"][0].segment("system").chain
+
+
+async def test_source_key_and_parse_use_the_same_snapshot(tmp_path: Path, monkeypatch: Any) -> None:
+    """Regression (independent follow-up review, 2026-09-16): config_key() and execute()
+    used to each read the file independently. An external edit landing between those two
+    reads let the cache-key digest (from read #1) and the actually-parsed content (from
+    read #2) describe different bytes -- a downstream node's cache entry ended up bound to
+    content it never processed. Fixed by sharing exactly one read between the two (see
+    JsonlSource._read_snapshot); this simulates that edit deterministically rather than
+    relying on race timing."""
+    path = tmp_path / "trace.jsonl"
+    path.write_text(
+        json.dumps({"request_id": "r", "timestamp": 1.0, "model": "m", "system": "alpha", "messages": []}),
+        encoding="utf-8",
+    )
+
+    original_execute = JsonlSource.execute
+    state = {"first": True}
+
+    async def execute_with_external_edit(self: JsonlSource, ctx: Any, **kwargs: Any) -> Any:
+        if state["first"]:
+            state["first"] = False
+            path.write_text(
+                json.dumps({"request_id": "r", "timestamp": 1.0, "model": "m",
+                            "system": "bravo", "messages": []}),
+                encoding="utf-8",
+            )
+        return await original_execute(self, ctx, **kwargs)
+
+    monkeypatch.setattr(JsonlSource, "execute", execute_with_external_edit)
+
+    graph = Graph("snapshot")
+    graph.add(JsonlSource("source", path=str(path)))
+    graph.add(Fingerprint("fingerprint", key=TEST_KEY), trace="source")
+
+    executor = Executor(cache=DiskCache(root=tmp_path / "cache"))
+    await executor.run(graph)  # first run: the external edit fires during execute()
+
+    path.write_text(
+        json.dumps({"request_id": "r", "timestamp": 1.0, "model": "m", "system": "alpha", "messages": []}),
+        encoding="utf-8",
+    )
+    second = await executor.run(graph)  # second run: clean, no injected edit
+
+    assert second["source"].requests[0].system == "alpha"
+    expected = fingerprint_request(second["source"].requests[0], TEST_KEY)
+    assert second["fingerprint"][0].segments == expected.segments
