@@ -74,6 +74,17 @@ class TestContentHash:
     def test_sets_are_order_independent(self) -> None:
         assert content_hash({1, 2, 3}) == content_hash({3, 2, 1})
 
+    def test_frames_parts_unambiguously(self) -> None:
+        """Regression (independent review, 2026-09-16): a NUL-delimited encoding let a
+        single string containing an embedded NUL byte serialise identically to two
+        separate arguments -- content_hash("a\\x00sb") == content_hash("a", "b"), a real,
+        exploitable collision, not a cryptographic one. Fixed by length-framing every
+        sub-value (see core/ids.py's `_frame`) instead of joining with a delimiter."""
+        assert content_hash("a\x00sb") != content_hash("a", "b")
+        # general injectivity sanity checks in the same family, for containers
+        assert content_hash(["ab", "c"]) != content_hash(["a", "bc"])
+        assert content_hash(["a"]) != content_hash(["a", ""])
+
 
 class TestFinding:
     def _finding(self, **overrides: object) -> Finding:

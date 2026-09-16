@@ -8,6 +8,12 @@ guarantees that matter:
 * Canonical: dicts hash by sorted key, so equal content always yields equal digest.
 * Type-tagged: ``1`` and ``"1"`` must not collide, or a config change could silently
   reuse a stale cache entry and we would report last week's findings as this week's.
+* Injective: no two distinct inputs may serialise to the same byte string. Encoding is
+  length-framed (a fixed-width byte count precedes every sub-value), not delimiter-joined
+  -- a NUL-joined scheme lets ``"a\\x00sb"`` and ``("a", "b")`` serialise identically,
+  which is a real, exploitable collision, not just a theoretical one. Length framing is
+  the standard fix (the same idea as protobuf's length-delimited fields): a byte count
+  that must be consumed exactly cannot be faked by content that merely looks similar.
 """
 
 from __future__ import annotations
@@ -18,13 +24,24 @@ from typing import Any, Final, NewType
 Digest = NewType("Digest", str)
 
 _DIGEST_LEN: Final = 64
-_NULL: Final = b"\x00"
+_LEN_BYTES: Final = 8  # supports sub-values up to 2**64 bytes; frame overhead is fixed
+
+
+def _frame(data: bytes) -> bytes:
+    """Length-prefix one already-canonical blob so it self-delimits when concatenated
+    with others. This is what makes container serialisation injective: a stream of framed
+    blobs can only be produced by that exact sequence of blobs, in that exact order."""
+    return len(data).to_bytes(_LEN_BYTES, "big") + data
 
 
 def _canonical(value: Any) -> bytes:
-    """Serialise to a canonical, type-tagged byte string.
+    """Serialise one value to a canonical, type-tagged byte string.
 
-    The tag prefix is what stops ``{"a": 1}`` and ``[["a", 1]]`` from colliding.
+    Scalars return a tag byte plus their own bytes; containers return a tag byte followed
+    by their children's *framed* canonical bytes, concatenated. Framing children (rather
+    than joining with a delimiter) is what stops ``{"a": 1}`` from being confusable with a
+    crafted string, a differently-nested container, or a different split of the same
+    total content.
     """
     if value is None:
         return b"n"
@@ -40,28 +57,38 @@ def _canonical(value: Any) -> bytes:
     if isinstance(value, bytes):
         return b"y" + value
     if isinstance(value, (list, tuple)):
-        return b"l" + _NULL.join(_canonical(item) for item in value) + b"|"
+        return b"l" + b"".join(_frame(_canonical(item)) for item in value)
     if isinstance(value, (set, frozenset)):
-        parts = sorted(_canonical(item) for item in value)
-        return b"e" + _NULL.join(parts) + b"|"
+        framed = sorted(_frame(_canonical(item)) for item in value)
+        return b"e" + b"".join(framed)
     if isinstance(value, dict):
-        parts = []
+        pairs = []
         for key in sorted(value, key=lambda k: str(k)):
-            parts.append(_canonical(key) + b"=" + _canonical(value[key]))
-        return b"d" + _NULL.join(parts) + b"|"
+            pairs.append(_frame(_canonical(key)) + _frame(_canonical(value[key])))
+        return b"d" + b"".join(pairs)
     if hasattr(value, "content_key"):
-        return b"o" + _canonical(value.content_key())
+        return b"o" + _frame(_canonical(value.content_key()))
     raise TypeError(
         f"{type(value).__name__} is not canonically hashable; give it a content_key() method"
     )
 
 
+def canonical_bytes(value: Any) -> bytes:
+    """Public entry point for callers (e.g. fingerprint hashing) that need the same
+    injective encoding this module uses internally, without reaching into `_canonical`."""
+    return _canonical(value)
+
+
 def content_hash(*parts: Any) -> Digest:
-    """Hash any combination of canonically serialisable values."""
+    """Hash any combination of canonically serialisable values.
+
+    Each part is framed independently before hashing (see `_frame`) so
+    ``content_hash("a", "b")`` can never collide with ``content_hash("a\\x00sb")`` or any
+    other repartitioning of the same bytes across a different number of arguments.
+    """
     hasher = hashlib.sha256()
     for part in parts:
-        hasher.update(_canonical(part))
-        hasher.update(_NULL)
+        hasher.update(_frame(_canonical(part)))
     return Digest(hasher.hexdigest())
 
 
