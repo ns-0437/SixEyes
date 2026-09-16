@@ -110,6 +110,30 @@ back under a different one, and comparing two fingerprints from different keys r
 change — a first fix pass keyed the chain but left the cache key and the comparison
 function both blind to *which* key was used.
 
+A message's end is marked as explicitly as its start. `("message_start", role,
+tool_call_id)` alone left the *last* message's content chain with no terminator, so
+extending it (`"hello"` → `"hello extra instructions"`, no new message added) was
+structurally indistinguishable from a legitimate new turn being appended — both leave the
+old chain as a literal prefix of the new one, which the `messages`-only growth tolerance
+correctly treats as safe *when it's actually a new message*. A third-round review
+demonstrated the edit case being silently reported as no change. Fixed with an explicit
+`("message_end", role)` unit after every message's content (`Fingerprint` version 5) —
+editing inserts units before that marker and breaks the prefix relationship; a genuine
+append still matches the old chain in full, marker included.
+
+Anything a node resolves once and reuses (a file's bytes, a local key) **must live in a
+`RunScoped` (graph/run_scoped.py), never a bare instance attribute the node sets once and
+trusts forever.** Two independent bugs — `JsonlSource` silently replaying a prior run's
+trace after its input file was deleted, and `Fingerprint` caching a mismatched key across
+a rotation mid-run — turned out to be the identical mistake: a value cached on `self`
+either never got invalidated when refreshing it failed (deleted-file case), or got
+resolved separately in `config_key()` and `execute()` with no guarantee the two calls saw
+the same thing (key-rotation case). `RunScoped.resolve(compute, force=True)` — called
+once, in `config_key()`, which `Graph.cache_keys()` guarantees runs before any node's
+`execute()` each run — invalidates the old value *before* attempting the new one, so a
+failed refresh can't leave a stale answer looking current; plain `resolve(compute)` in
+`execute()` reuses whatever that forced call just produced. Do not reinvent this per node.
+
 A change that puts customer content into a payload is rejected on sight, no matter how
 useful. Our pitch is "we never see your prompts, we see the shape of them" — that sentence
 must remain literally true.
