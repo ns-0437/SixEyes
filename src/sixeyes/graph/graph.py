@@ -18,7 +18,7 @@ from sixeyes.core.errors import (
     UnknownPortError,
 )
 from sixeyes.core.ids import Digest, content_hash
-from sixeyes.graph.node import Node
+from sixeyes.graph.node import Node, NodeKind
 
 
 def _types_compatible(produced: Any, expected: Any) -> bool:
@@ -245,23 +245,84 @@ class Graph:
                 tainted.add(node_id)
         return frozenset(tainted)
 
+    def content_bearing_nodes(self) -> frozenset[str]:
+        """Transitive closure of content-bearing influence, honouring declassification.
+
+        A node's *effective* content-bearing status is its own declared status, OR any
+        upstream's effective status -- UNLESS this node explicitly declares
+        `declassifies = True`, which resets the closure at that point. This is the fix for
+        an ordinary passthrough node silently persisting raw content to disk simply
+        because it never set `content_bearing = True` itself: by default, sensitivity
+        propagates; only a reviewed, explicit declassification stops it.
+        """
+        self.validate()
+        content_bearing: set[str] = set()
+        for node_id in self._topological_order():
+            node = self._nodes[node_id]
+            upstream_bearing = any(
+                up in content_bearing for up in self._wiring[node_id].values()
+            )
+            if node.declassifies:
+                effective = node.content_bearing
+            else:
+                effective = node.content_bearing or upstream_bearing
+            if effective:
+                content_bearing.add(node_id)
+        return frozenset(content_bearing)
+
+    def cache_unsafe_nodes(self) -> frozenset[str]:
+        """Nodes whose structural (identity-based) cache key cannot be trusted to reflect
+        their actual runtime output: RESIDENT nodes themselves, and everything downstream
+        of one.
+
+        RESIDENT nodes may return a different value on every invocation by design (an
+        index, a baseline) while `Graph.cache_keys()` is computed once from node identity,
+        before any node has executed -- it has no way to see that a RESIDENT node's output
+        actually changed between two separate `Executor.run()` calls sharing one cache. A
+        PURE descendant's key is therefore stable across runs even when its real input
+        changed, which serves a stale result. Until cache keys can incorporate a RESIDENT
+        node's actual output (a real fix, not yet built), the safe interim behaviour is to
+        never persist-or-reuse a cached result for anything in this closure -- always
+        recompute, the same conservative default `content_bearing` gets under a
+        persistent cache.
+        """
+        self.validate()
+        unsafe: set[str] = set()
+        for node_id in self._topological_order():
+            node = self._nodes[node_id]
+            if node.kind is NodeKind.RESIDENT or any(
+                up in unsafe for up in self._wiring[node_id].values()
+            ):
+                unsafe.add(node_id)
+        return frozenset(unsafe)
+
     def describe(self) -> str:
         """Human-readable plan. Printed by the CLI before a run so a customer's engineer
         can see exactly what is about to execute."""
         self.validate()
         tainted = self.tainted_nodes()
+        content_bearing = self.content_bearing_nodes()
+        cache_unsafe = self.cache_unsafe_nodes()
         lines = [f"graph {self.name!r}: {len(self._nodes)} nodes"]
         for depth, group in enumerate(self.levels()):
             lines.append(f"  level {depth}:")
             for node_id in group:
                 node = self._nodes[node_id]
-                mark = "  [tainted]" if node_id in tainted else ""
+                marks = "".join(
+                    f"  [{label}]"
+                    for label, present in (
+                        ("tainted", node_id in tainted),
+                        ("content-bearing", node_id in content_bearing),
+                        ("cache-unsafe", node_id in cache_unsafe),
+                    )
+                    if present
+                )
                 ports = ", ".join(
                     f"{p}<-{u}" for p, u in sorted(self._wiring[node_id].items())
                 )
                 wiring = f"  ({ports})" if ports else ""
                 lines.append(
                     f"    {node_id:<24} {node.kind.value:<10} v{node.version}"
-                    f"{wiring}{mark}"
+                    f"{wiring}{marks}"
                 )
         return "\n".join(lines)

@@ -58,12 +58,22 @@ class Node(ABC):
     output: ClassVar[type] = object
 
     content_bearing: ClassVar[bool] = False
-    """True if this node's output may hold raw customer content (prompt text, tool
-    arguments, document text) rather than content-free fingerprints. Per CLAUDE.md rule 3,
-    the executor refuses to persist such output to a persistent cache (e.g. DiskCache) --
-    it always recomputes rather than risk writing customer content to disk. This is the
-    same enforcement pattern as NodeKind.STOCHASTIC taint (rule 2): the boundary is upheld
-    by the runtime, not by convention."""
+    """True if this node's *own* output may hold raw customer content (prompt text, tool
+    arguments, document text) rather than content-free fingerprints. This is a per-node
+    declaration, not the enforced signal -- see `declassifies` below and
+    Graph.content_bearing_nodes(), which is what the executor actually checks."""
+
+    declassifies: ClassVar[bool] = False
+    """True only for a node that deliberately, reviewedly turns content-bearing input into
+    content-free output (Fingerprint is the one example). By default a node's *effective*
+    content-bearing status is `content_bearing OR any upstream is effectively
+    content-bearing` -- content sensitivity propagates downstream automatically, the same
+    way STOCHASTIC taint does (rule 2), so an ordinary passthrough node cannot silently
+    declassify raw content just by not setting a flag. Setting `declassifies = True` is an
+    explicit, auditable claim that this specific node's output has been checked and is
+    safe; per CLAUDE.md rule 3, the executor refuses to persist a node's output to a
+    persistent cache whenever its *effective* status (Graph.content_bearing_nodes()) is
+    content-bearing, regardless of what this node alone declares."""
 
     def __init__(self, node_id: str, **config: Any) -> None:
         if not node_id or not node_id.replace("_", "").replace(".", "").isalnum():
@@ -112,6 +122,7 @@ def node(
     output: type,
     inputs: Mapping[str, type] | None = None,
     content_bearing: bool = False,
+    declassifies: bool = False,
 ) -> Callable[[Callable[..., Awaitable[Any]]], type[Node]]:
     """Turn an async function into a Node class.
 
@@ -161,6 +172,7 @@ def node(
             "inputs": declared,
             "output": output,
             "content_bearing": content_bearing,
+            "declassifies": declassifies,
             "_fn": staticmethod(fn),
             "__doc__": fn.__doc__,
             "__module__": fn.__module__,

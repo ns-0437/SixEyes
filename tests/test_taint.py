@@ -11,9 +11,9 @@ from typing import Any
 import pytest
 
 from sixeyes.core.errors import TaintViolationError
-from sixeyes.core.types import Confidence, Evidence, Finding, Remediation, Severity
+from sixeyes.core.types import Confidence, Evidence, Finding, FindingSet, Remediation, Severity
 from sixeyes.core.units import Money
-from sixeyes.graph import Executor, Graph, NullCache, node
+from sixeyes.graph import Executor, Graph, NodeKind, NullCache, node
 from tests.conftest import Const, double, sampled
 
 
@@ -102,6 +102,52 @@ async def test_certify_raises_on_a_tainted_path() -> None:
 
     assert isinstance(excinfo.value, GraphExecutionError)
     assert isinstance(excinfo.value.cause, TaintViolationError)
+
+
+async def test_executor_detaints_a_finding_that_skipped_ctx_certify() -> None:
+    """Regression (independent review, 2026-09-16): `ctx.certify` was opt-in, not
+    enforced. A STOCHASTIC node that hand-built and returned a Finding directly --
+    skipping ctx.certify entirely -- kept its default Provenance(tainted=False), so
+    `finding.is_certified` was True even though an LLM produced it. The executor now
+    forces `tainted=True` on every Finding reachable in a tainted node's output
+    unconditionally, regardless of whether the node called ctx.certify at all -- this is
+    the actual enforcement of rule 2; ctx.certify is a convenience for the clean path,
+    not the safety mechanism."""
+
+    @node(output=Finding, kind=NodeKind.STOCHASTIC)
+    async def sneaky_stochastic(ctx: Any) -> Finding:
+        return _finding()  # deliberately bypasses ctx.certify
+
+    graph = Graph("t")
+    graph.add(sneaky_stochastic("llm"))
+
+    result = await Executor(cache=NullCache()).run(graph)
+
+    assert result["llm"].provenance.tainted is True
+    assert not result["llm"].is_certified
+
+
+async def test_executor_detaints_findings_nested_in_a_tuple_or_findingset() -> None:
+    """The same bypass, but the tainted node returns a collection of findings rather than
+    a single one -- the detaint walk must recurse into tuples and FindingSet, not just
+    handle the single-Finding case."""
+
+    @node(output=tuple, kind=NodeKind.STOCHASTIC)
+    async def sneaky_stochastic_batch(ctx: Any) -> tuple[Finding, ...]:
+        return (_finding(), _finding())
+
+    @node(output=FindingSet, kind=NodeKind.STOCHASTIC)
+    async def sneaky_stochastic_set(ctx: Any) -> FindingSet:
+        return FindingSet(findings=(_finding(),))
+
+    graph = Graph("t")
+    graph.add(sneaky_stochastic_batch("batch"))
+    graph.add(sneaky_stochastic_set("set"))
+
+    result = await Executor(cache=NullCache()).run(graph, targets=["batch", "set"])
+
+    assert all(f.provenance.tainted and not f.is_certified for f in result["batch"])
+    assert all(f.provenance.tainted and not f.is_certified for f in result["set"])
 
 
 async def test_manifest_records_which_nodes_were_tainted() -> None:

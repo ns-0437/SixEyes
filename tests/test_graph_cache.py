@@ -145,3 +145,37 @@ async def test_resident_kind_is_never_cached() -> None:
     r1 = await Executor(cache=cache).run(graph)
     r2 = await Executor(cache=cache).run(graph)
     assert (r1["r"], r2["r"]) == (1, 2), "RESIDENT output must not be cached"
+
+
+async def test_pure_descendant_of_resident_is_not_stale() -> None:
+    """Regression (independent review, 2026-09-16): a PURE node's cache key is derived
+    from node *identity*, computed once before any node executes -- it has no way to see
+    that a RESIDENT upstream's actual output changed between two separate `Executor.run()`
+    calls sharing one cache. A PURE descendant's key was therefore identical across runs
+    even though its real input differed, and it served a stale cached result. Fixed by
+    excluding RESIDENT nodes and everything downstream of them from caching entirely
+    (Graph.cache_unsafe_nodes) -- the same fail-closed default `content_bearing` gets."""
+    from sixeyes.graph import NodeKind
+
+    calls = {"n": 0}
+
+    @node(output=int, kind=NodeKind.RESIDENT)
+    async def resident(ctx: Any) -> int:
+        calls["n"] += 1
+        return calls["n"]
+
+    @node(output=int)
+    async def doubled(ctx: Any, x: int) -> int:
+        return 2 * x
+
+    graph = Graph("resident_descendant")
+    graph.add(resident("source"))
+    graph.add(doubled("double"), x="source")
+
+    cache = MemoryCache()
+    executor = Executor(cache=cache)
+    r1 = await executor.run(graph)
+    r2 = await executor.run(graph)
+
+    assert (r1["source"], r1["double"]) == (1, 2)
+    assert (r2["source"], r2["double"]) == (2, 4), "double() served a stale result"

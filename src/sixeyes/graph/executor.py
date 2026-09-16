@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclass_replace
 from typing import Any, Iterable
 
 from sixeyes.core.errors import GraphExecutionError
 from sixeyes.core.ids import Digest
+from sixeyes.core.types import Finding, FindingSet
 from sixeyes.graph.cache import ArtifactCache, MemoryCache, is_miss
 from sixeyes.graph.context import RunContext
 from sixeyes.graph.graph import Graph
@@ -36,6 +37,33 @@ class RunResult:
 
     def __contains__(self, node_id: object) -> bool:
         return node_id in self.outputs
+
+
+def _detaint(value: Any, node_id: str) -> Any:
+    """Force `provenance.tainted = True` on every Finding reachable inside `value`.
+
+    This is the actual enforcement of CLAUDE.md rule 2, applied unconditionally to every
+    output of a tainted node -- not just to findings a node author remembered to pass
+    through `ctx.certify`. A STOCHASTIC node returning a hand-built `Finding` (skipping
+    `ctx.certify` entirely) previously kept whatever provenance it was constructed with,
+    which defaults to `tainted=False` -- meaning `finding.is_certified` could be `True`
+    for a finding an LLM produced. `ctx.certify` remains useful for a clean path (it stamps
+    proper node_ids and raises loudly, during execution, if a node author calls it on a
+    tainted path by mistake) but it was never the actual safety mechanism; this is.
+    """
+    if isinstance(value, Finding):
+        if value.provenance.tainted:
+            return value
+        node_ids = (*value.provenance.node_ids, node_id) if value.provenance.node_ids else (node_id,)
+        new_provenance = dataclass_replace(value.provenance, tainted=True, node_ids=node_ids)
+        return dataclass_replace(value, provenance=new_provenance)
+    if isinstance(value, FindingSet):
+        return FindingSet(findings=tuple(_detaint(f, node_id) for f in value.findings))
+    if isinstance(value, tuple):
+        return tuple(_detaint(v, node_id) for v in value)
+    if isinstance(value, list):
+        return [_detaint(v, node_id) for v in value]
+    return value
 
 
 class Executor:
@@ -75,6 +103,8 @@ class Executor:
         needed = self._ancestors(graph, wanted)
         keys = graph.cache_keys()
         tainted = graph.tainted_nodes()
+        content_bearing = graph.content_bearing_nodes()
+        cache_unsafe = graph.cache_unsafe_nodes()
 
         root_ctx = RunContext(graph_name=graph.name, tainted_nodes=tainted)
         manifest = RunManifest(
@@ -101,6 +131,7 @@ class Executor:
                         self._run_node(
                             graph, node_id, keys[node_id], root_ctx,
                             result.outputs, manifest, semaphore,
+                            content_bearing, cache_unsafe,
                         ),
                         name=f"sixeyes:{node_id}",
                     )
@@ -156,17 +187,30 @@ class Executor:
         outputs: dict[str, Any],
         manifest: RunManifest,
         semaphore: asyncio.Semaphore,
+        content_bearing_nodes: frozenset[str],
+        cache_unsafe_nodes: frozenset[str],
     ) -> Any:
         node = graph.node(node_id)
         tainted = node_id in root_ctx.tainted_nodes
+        is_content_bearing = node_id in content_bearing_nodes
         started = time.perf_counter()
 
-        # CLAUDE.md rule 3: a content-bearing node's output never reaches a persistent
-        # cache. It is always recomputed rather than risk raw customer content landing on
-        # disk between runs. Non-persistent caches (MemoryCache, NullCache) are unaffected
-        # -- they die with the process, so passing content through them is safe.
-        cache_is_persistent = getattr(self.cache, "persistent", False)
-        use_cache = node.kind.is_cacheable and not (node.content_bearing and cache_is_persistent)
+        # CLAUDE.md rule 3: a content-bearing node's *effective* output (its own, or
+        # inherited from upstream -- see Graph.content_bearing_nodes) never reaches a
+        # persistent cache. An unrecognised custom cache is treated as persistent (fail
+        # closed) rather than assumed safe -- a cache that forgets to declare `persistent`
+        # must not be able to earn "safe to write raw content" by omission.
+        #
+        # Separately: a node downstream of a RESIDENT node has a structural cache key that
+        # cannot reflect the RESIDENT's actual runtime output (see
+        # Graph.cache_unsafe_nodes) -- it is excluded from caching for the same
+        # fail-closed reason, to avoid serving a stale result as if it were current.
+        cache_is_persistent = getattr(self.cache, "persistent", True)
+        use_cache = (
+            node.kind.is_cacheable
+            and node_id not in cache_unsafe_nodes
+            and not (is_content_bearing and cache_is_persistent)
+        )
 
         if use_cache:
             cached = self.cache.get(cache_key)
@@ -180,7 +224,7 @@ class Executor:
                         outcome="cache_hit",
                         duration_ms=(time.perf_counter() - started) * 1000,
                         tainted=tainted,
-                        content_bearing=node.content_bearing,
+                        content_bearing=is_content_bearing,
                     )
                 )
                 return cached
@@ -195,6 +239,19 @@ class Executor:
             async with semaphore:
                 value = await node.execute(ctx, **kwargs)
         except Exception as exc:
+            # A content-bearing node's exception message may itself carry raw customer
+            # content (a malformed field whose value gets embedded in, say, a ValueError
+            # from a type conversion) -- the node should sanitise that at the source, but
+            # the manifest is the actual export surface, so it redacts unconditionally as
+            # a backstop rather than trusting every current and future node author to
+            # remember. The original exception (with its full message) is still raised via
+            # GraphExecutionError.cause for local, in-process debugging -- only the
+            # persisted/exportable manifest record is redacted.
+            error_text = (
+                f"{type(exc).__name__} (message suppressed: node handles customer content)"
+                if is_content_bearing
+                else f"{type(exc).__name__}: {exc}"
+            )
             manifest.record(
                 NodeRecord(
                     node_id=node_id,
@@ -204,11 +261,14 @@ class Executor:
                     outcome="failed",
                     duration_ms=(time.perf_counter() - started) * 1000,
                     tainted=tainted,
-                    content_bearing=node.content_bearing,
-                    error=f"{type(exc).__name__}: {exc}",
+                    content_bearing=is_content_bearing,
+                    error=error_text,
                 )
             )
             raise GraphExecutionError(node_id, exc) from exc
+
+        if tainted:
+            value = _detaint(value, node_id)
 
         if use_cache:
             self.cache.put(cache_key, value)
@@ -222,7 +282,7 @@ class Executor:
                 outcome="executed",
                 duration_ms=(time.perf_counter() - started) * 1000,
                 tainted=tainted,
-                content_bearing=node.content_bearing,
+                content_bearing=is_content_bearing,
             )
         )
         return value
