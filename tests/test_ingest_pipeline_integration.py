@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from sixeyes.fingerprint.divergence import Divergence
 from sixeyes.fingerprint.fingerprint import Fingerprint, _keyed_request_ref, fingerprint_request
 from sixeyes.fingerprint.types import DivergenceKind
@@ -170,3 +172,39 @@ async def test_source_key_and_parse_use_the_same_snapshot(tmp_path: Path, monkey
     assert second["source"].requests[0].system == "alpha"
     expected = fingerprint_request(second["source"].requests[0], TEST_KEY)
     assert second["fingerprint"][0].segments == expected.segments
+
+
+async def test_missing_file_after_a_successful_run_fails_the_next_run_instead_of_replaying(
+    tmp_path: Path,
+) -> None:
+    """Regression (independent third-round review, 2026-09-16): a successful run followed
+    by deleting the input file and running again used to succeed, silently returning the
+    first run's trace -- the forced snapshot refresh's read raised before the old
+    attribute was ever cleared, so a missing file left the previous run's bytes looking
+    current. Fixed via RunScoped, which invalidates before attempting the new read, not
+    after. A missing input must now fail the run, not replay stale data."""
+    path = tmp_path / "trace.jsonl"
+    path.write_text(
+        json.dumps({"request_id": "r", "timestamp": 1.0, "model": "m", "system": "alpha", "messages": []}),
+        encoding="utf-8",
+    )
+
+    graph = Graph("missing_file")
+    graph.add(JsonlSource("source", path=str(path)))
+
+    executor = Executor(cache=DiskCache(root=tmp_path / "cache"))
+    first = await executor.run(graph)
+    assert first["source"].requests[0].system == "alpha"
+
+    path.unlink()
+
+    with pytest.raises(Exception):
+        await executor.run(graph)
+
+    # restoring the file with *different* content must be processed fresh, not skipped
+    path.write_text(
+        json.dumps({"request_id": "r", "timestamp": 1.0, "model": "m", "system": "gamma", "messages": []}),
+        encoding="utf-8",
+    )
+    third = await executor.run(graph)
+    assert third["source"].requests[0].system == "gamma"
