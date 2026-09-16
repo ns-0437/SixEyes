@@ -18,6 +18,7 @@ from sixeyes.fingerprint.tokenize import tokenize
 from sixeyes.fingerprint.types import SEGMENT_ORDER, RequestFingerprint, SegmentFingerprint
 from sixeyes.graph.context import RunContext
 from sixeyes.graph.node import Node, NodeKind
+from sixeyes.graph.run_scoped import RunScoped
 from sixeyes.ingest.types import RawRequest, RawTrace
 
 _HMAC_DIGEST = "sha256"
@@ -147,18 +148,36 @@ class Fingerprint(Node):
     output provably is not. Every other node inherits content-bearing status from its
     inputs by default (see graph/node.py, graph/graph.py) -- this is the one deliberate,
     reviewed exception, not a default any node gets by skipping a flag.
+
+    The key is resolved once per run via `RunScoped`, the same mechanism JsonlSource uses
+    for its file snapshot (see graph/run_scoped.py). A third-round review found that even
+    after `key_ref` closed the *cache-collision* half of key handling, `config_key()` and
+    `execute()` still each called `_resolve_key()` independently -- fine under a stable
+    key, but a key rotated in between (the default key file replaced mid-run) left
+    `config_key()`'s cache identity and `execute()`'s actual fingerprint output computed
+    under different keys, silently mismatched. `RunScoped` forces a fresh resolution in
+    `config_key()` (which always runs first each run) and `execute()` reuses that exact
+    value -- and because it is invalidated per run, not held on the instance indefinitely,
+    a *real* rotation between two separate runs still takes effect on the next one.
     """
 
     kind = NodeKind.PURE
-    version = "3"
+    version = "4"
     inputs: ClassVar[dict[str, type]] = {"trace": RawTrace}
     output = tuple
     content_bearing = False
     declassifies = True
 
+    def __init__(self, node_id: str, **config: Any) -> None:
+        super().__init__(node_id, **config)
+        self._key: RunScoped[bytes] = RunScoped()
+
+    def _resolve(self) -> bytes:
+        return _resolve_key(self.config)
+
     async def execute(self, ctx: RunContext, **inputs: Any) -> tuple[RequestFingerprint, ...]:
         trace: RawTrace = inputs["trace"]
-        key = _resolve_key(self.config)
+        key = self._key.resolve(self._resolve)
         fingerprints = tuple(fingerprint_request(r, key) for r in trace.requests)
         ctx.log("fingerprinted %d requests, content-free", len(fingerprints))
         return fingerprints
@@ -171,4 +190,4 @@ class Fingerprint(Node):
         # two different explicit keys both reported True and collided in the cache,
         # serving key A's fingerprints back under key B (an independent review's follow-up
         # regression demonstrated this directly).
-        return {"key_ref": _key_ref(_resolve_key(self.config))}
+        return {"key_ref": _key_ref(self._key.resolve(self._resolve, force=True))}

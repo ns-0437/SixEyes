@@ -208,3 +208,49 @@ async def test_missing_file_after_a_successful_run_fails_the_next_run_instead_of
     )
     third = await executor.run(graph)
     assert third["source"].requests[0].system == "gamma"
+
+
+async def test_default_key_rotating_mid_run_does_not_poison_the_cache(tmp_path: Path, monkeypatch: Any) -> None:
+    """Regression (independent third-round review, 2026-09-16): Fingerprint resolved its
+    default local key separately in config_key() and execute(). A key rotated in between
+    those two calls (simulated here without touching any real key file) left the node's
+    cache identity computed under key A but its actual fingerprint output computed under
+    key B -- that run's fingerprints were then stored under A's cache slot. A later run
+    planned under A again got a cache hit and silently served back B's mismatched result.
+    Fixed by resolving the key once per run via RunScoped, shared between the two calls."""
+    import sixeyes.fingerprint.fingerprint as fingerprint_module
+
+    key_a = b"\x01" * 32
+    key_b = b"\x02" * 32
+    state = {"key": key_a, "rotate": True}
+    monkeypatch.setattr(fingerprint_module, "load_or_create_key", lambda: state["key"])
+
+    path = tmp_path / "trace.jsonl"
+    path.write_text(
+        json.dumps({"request_id": "r", "timestamp": 1.0, "model": "m", "system": "alpha", "messages": []}),
+        encoding="utf-8",
+    )
+
+    original_execute = JsonlSource.execute
+
+    async def rotate_after_planning(self: JsonlSource, ctx: Any, **kwargs: Any) -> Any:
+        if state["rotate"]:
+            state["rotate"] = False
+            state["key"] = key_b  # simulates rotation happening between config_key() and execute()
+        return await original_execute(self, ctx, **kwargs)
+
+    monkeypatch.setattr(JsonlSource, "execute", rotate_after_planning)
+
+    graph = Graph("key_rotation")
+    graph.add(JsonlSource("source", path=str(path)))
+    graph.add(Fingerprint("fingerprint"), trace="source")
+
+    executor = Executor(cache=DiskCache(root=tmp_path / "cache"))
+    await executor.run(graph)  # plans under A, rotates to B mid-run
+
+    state["key"] = key_a  # rotation reverted -- planning under A again
+    second = await executor.run(graph)
+
+    expected = fingerprint_request(second["source"].requests[0], key_a)
+    assert second["fingerprint"][0].key_ref == expected.key_ref
+    assert second["fingerprint"][0].segments == expected.segments
