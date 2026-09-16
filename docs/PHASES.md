@@ -22,15 +22,45 @@ retrofitting a graph is the rewrite that kills the timeline.
 re-runs incrementally when one node's version bumps, rejects cycles and type mismatches at
 build time, and refuses to certify findings tainted by a `STOCHASTIC` node.
 
-## Phase 2 — Ingest & content-free fingerprinting
+## Phase 2 — Ingest & content-free fingerprinting  ← IN PROGRESS
 
 OTel GenAI semconv reader, Anthropic/OpenAI SDK adapters, JSONL importer, provider-agnostic
-normalisation. Then the crown jewel: token-boundary prefix hashing that localises divergence
-without ever holding prompt text.
+normalisation. Then the crown jewel: prefix hashing that localises divergence without ever
+holding prompt text.
 
 **Exit criterion:** given two requests differing by one injected timestamp, we report the
 divergence offset correctly, and a byte-level audit of the emitted payload proves zero
 recoverable customer content.
+
+**Shipped so far (2026-09-16):**
+- `ingest.jsonl` — the zero-instrumentation path: one documented JSON-object-per-line
+  schema, no tracing SDK required. This is the front door most real workloads will
+  actually use first, per the build plan's GTM notes, so it went first.
+- `fingerprint.fingerprint` / `fingerprint.divergence` — a single combined rolling-hash
+  chain over model → system → tools → messages (the same order a provider concatenates a
+  cacheable prefix), reporting the first divergence as one of
+  `model_changed` / `system_changed` / `tools_changed` / `messages_changed` — matching
+  Anthropic's own `cache_miss_reason` vocabulary (verified against their live
+  cache-diagnosis docs, 2026-09-16) so a report reads the same regardless of whether the
+  underlying signal came from a provider API or a trace export analyzed after the fact.
+- Content-freeness is enforced by the executor, not just asserted: a `content_bearing`
+  node's output is never written to a persistent cache (`test_content_boundary.py`), and
+  the exit criterion's byte-level audit is a real test
+  (`test_fingerprint.py::test_fingerprint_output_contains_no_recoverable_customer_content`),
+  not a design claim.
+- Full pipeline (`JsonlSource → Fingerprint → Divergence`) proven through the real graph
+  executor, including that a version bump on `Divergence` does not force `Fingerprint` to
+  re-run (`test_ingest_pipeline_integration.py`).
+
+**Known limitation, tracked not hidden:** `fingerprint.tokenize` currently splits on
+whitespace, not real subword/BPE tokens. It proves the localization *mechanism* correctly
+(same-position changes are found exactly) but a `token_offset` is not yet a literal
+provider token index. Swapping in a real tokenizer (tiktoken or equivalent) is a drop-in
+replacement of `tokenize()` with no change to the fingerprinting or divergence logic built
+on top of it — near-term, not blocking, and not to be silently forgotten.
+
+**Still open for this phase:** OTel GenAI semconv reader, native Anthropic/OpenAI SDK
+adapters, real-tokenizer swap-in above.
 
 ## Phase 3 — Detectors
 

@@ -109,8 +109,14 @@ sixeyes/
 │   │   └── registry.py        # node registration / discovery
 │   ├── obs/
 │   │   └── trace.py           # per-node timing, cache hit/miss, run manifest
-│   ├── ingest/                # Phase 2
-│   ├── fingerprint/           # Phase 2
+│   ├── ingest/                # Phase 2 (JSONL ingest shipped; OTel/SDK adapters pending)
+│   │   ├── types.py           # content-bearing domain model: RawTrace, RawRequest, ...
+│   │   └── jsonl.py           # zero-instrumentation import path + JsonlSource node
+│   ├── fingerprint/           # Phase 2 (shipped)
+│   │   ├── types.py           # content-free: RequestFingerprint, DivergenceReport
+│   │   ├── tokenize.py        # word-boundary tokenizer (real BPE tokenizer: near-term)
+│   │   ├── fingerprint.py     # RawTrace -> content-free fingerprints (Fingerprint node)
+│   │   └── divergence.py      # consecutive-fingerprint comparison (Divergence node)
 │   ├── detect/                # Phase 3
 │   ├── econ/                  # Phase 4
 │   ├── remediate/             # Phase 5
