@@ -32,35 +32,57 @@ holding prompt text.
 divergence offset correctly, and a byte-level audit of the emitted payload proves zero
 recoverable customer content.
 
-**Shipped so far (2026-09-16):**
+**Shipped so far (2026-09-16, hardened same day after an independent review):**
 - `ingest.jsonl` — the zero-instrumentation path: one documented JSON-object-per-line
   schema, no tracing SDK required. This is the front door most real workloads will
   actually use first, per the build plan's GTM notes, so it went first.
-- `fingerprint.fingerprint` / `fingerprint.divergence` — a single combined rolling-hash
-  chain over model → system → tools → messages (the same order a provider concatenates a
-  cacheable prefix), reporting the first divergence as one of
+- `fingerprint.fingerprint` / `fingerprint.divergence` — three *independently*-seeded,
+  HMAC-keyed rolling-hash chains, one per segment, walked in Anthropic's documented
+  prefix order (verified against their live docs, 2026-09-16): `tools`, `system`,
+  `messages`. Model identity is a separate compatibility digest, checked first and
+  independently — not a token inside the prefix. Reports the first divergence as one of
   `model_changed` / `system_changed` / `tools_changed` / `messages_changed` — matching
-  Anthropic's own `cache_miss_reason` vocabulary (verified against their live
-  cache-diagnosis docs, 2026-09-16) so a report reads the same regardless of whether the
-  underlying signal came from a provider API or a trace export analyzed after the fact.
-- Content-freeness is enforced by the executor, not just asserted: a `content_bearing`
-  node's output is never written to a persistent cache (`test_content_boundary.py`), and
-  the exit criterion's byte-level audit is a real test
-  (`test_fingerprint.py::test_fingerprint_output_contains_no_recoverable_customer_content`),
-  not a design claim.
+  Anthropic's own `cache_miss_reason` vocabulary — so a report reads the same regardless
+  of whether the underlying signal came from a provider API or a trace export analyzed
+  after the fact.
+- Content-freeness is enforced by the executor, not just asserted: any node's *effective*
+  content-bearing status (propagated downstream by default — see CLAUDE.md rule 3) is
+  never written to a persistent cache, and the exit criterion's byte-level audit is a real
+  test, not a design claim.
 - Full pipeline (`JsonlSource → Fingerprint → Divergence`) proven through the real graph
   executor, including that a version bump on `Divergence` does not force `Fingerprint` to
-  re-run (`test_ingest_pipeline_integration.py`).
+  re-run.
 
-**Known limitation, tracked not hidden:** `fingerprint.tokenize` currently splits on
-whitespace, not real subword/BPE tokens. It proves the localization *mechanism* correctly
-(same-position changes are found exactly) but a `token_offset` is not yet a literal
-provider token index. Swapping in a real tokenizer (tiktoken or equivalent) is a drop-in
-replacement of `tokenize()` with no change to the fingerprinting or divergence logic built
-on top of it — near-term, not blocking, and not to be silently forgotten.
+**Independent review, 2026-09-16 — reproduced and fixed same day.** A review verified
+against the code (13 written regressions, all reproduced against commit `c5409ce` before
+any fix) found: an unkeyed hash chain that let low-entropy words be recovered by dictionary
+guessing against exported digests; content-bearing status that didn't propagate to a
+passthrough node; raw content able to leak through unsanitised parse-error messages and
+raw request ids; whitespace discarded during tokenization (masking whitespace-only
+changes); message-boundary markers a content string could impersonate; tool_call_id
+ignored entirely; the wrong prefix order (this doc previously said `model → system → tools
+→ messages`); a deletion misattributed to the wrong segment; certification bypassable by
+skipping `ctx.certify`; stale results served for a `PURE` node downstream of a `RESIDENT`
+one; and an ambiguous hash encoding with a real (non-cryptographic) collision. All 13 are
+now covered by permanent tests in this repo's own suite (`test_fingerprint.py`,
+`test_content_boundary.py`, `test_taint.py`, `test_graph_cache.py`,
+`test_ingest_pipeline_integration.py`, `test_core.py`) — see `CLAUDE.md` rules 1–3 and
+`ARCHITECTURE.md`'s NodeKind section for the corrected guarantees.
+
+**Known limitation, tracked not hidden:** `fingerprint.tokenize` splits on whitespace
+*and* preserves it as its own unit (fixed 2026-09-16 — it previously discarded whitespace
+entirely), but this is still not a real subword/BPE tokenizer. It proves the localization
+*mechanism* correctly; a "unit offset" is not yet a literal provider token index, and nothing
+in this codebase should call it one. Swapping in a real tokenizer (tiktoken or equivalent)
+is a drop-in replacement of `tokenize()` with no change to the fingerprinting or divergence
+logic built on top of it — near-term, not blocking, and not to be silently forgotten. Per
+the same review: that swap is an assumption, not yet a tested one — treat "drop-in" as a
+claim to verify when it actually happens, not before.
 
 **Still open for this phase:** OTel GenAI semconv reader, native Anthropic/OpenAI SDK
-adapters, real-tokenizer swap-in above.
+adapters, real-tokenizer swap-in above, a real fix for RESIDENT-descendant cache staleness
+(current fix is the safe-but-conservative "never cache it" rather than a cache key that
+incorporates actual runtime output).
 
 ## Phase 3 — Detectors
 

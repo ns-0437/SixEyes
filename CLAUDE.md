@@ -51,14 +51,34 @@ eval gate, or it does not ship.
 **2. Determinism is the product.**
 Detection is a pure function of the trace. Same input, same findings, forever. No LLM is
 ever in the detection path. `NodeKind.STOCHASTIC` nodes are barred by the executor from
-producing verified findings — this is enforced in code, not convention. If you find
+producing certified findings — enforced unconditionally at the executor (`_detaint` in
+graph/executor.py forces `tainted=True` on every Finding a tainted node's output reaches,
+whether or not the node called `ctx.certify`), not opt-in convention. An independent
+review (2026-09-16) found that omitting `ctx.certify` was sufficient to bypass the
+advertised boundary; `ctx.certify` remains useful for a clean path (proper provenance,
+loud in-code failure on misuse) but was never itself the safety mechanism. If you find
 yourself reaching for a model to decide whether something is waste, you have misunderstood
 the product.
 
 **3. Content-free by construction.**
 We never store, transmit, or log raw prompt text, completions, tool arguments, or document
-content. We handle token-boundary hashes, counts, digests, and structural fingerprints
-only. Every field that crosses the collector boundary must be provably non-reversible.
+content. We handle whitespace-unit hashes, counts, digests, and structural fingerprints
+only — "unit" because our tokenizer is whitespace-preserving, not a real provider/BPE
+tokenizer yet; never call an offset a "token" position in anything customer-facing until
+that changes (docs/PHASES.md tracks it). Every field that crosses the collector boundary
+must be provably non-reversible, and per-step chain hashing is HMAC-keyed with a secret
+generated and kept local to the machine (`fingerprint.keys`) — an *unkeyed* rolling hash
+chain lets anyone holding two adjacent exported digests test low-entropy candidate words
+directly against the public hash function, which a 2026-09-16 independent review
+demonstrated as a real, reproduced attack, not a theoretical one.
+
+Content-bearing status **propagates downstream by default**: an ordinary node consuming
+content-bearing input is itself treated as content-bearing (`Graph.content_bearing_nodes`)
+unless it explicitly sets `declassifies = True` — a reviewed, auditable claim, not a
+default any node gets by omission. The same review found the opposite (declared-only,
+non-propagating) design let a plain passthrough node persist raw content to disk simply by
+never setting a flag. `Fingerprint` is presently the only node that declassifies.
+
 A change that puts customer content into a payload is rejected on sight, no matter how
 useful. Our pitch is "we never see your prompts, we see the shape of them" — that sentence
 must remain literally true.

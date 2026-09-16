@@ -17,21 +17,36 @@ typed DAG executor we own, roughly 600 lines, zero external dependencies.
 
 ## NodeKind — where strategy is enforced by the type system
 
-| Kind | Determinism | Cacheable | May produce verified findings |
+| Kind | Determinism | Cacheable | May produce certified findings |
 |---|---|---|---|
 | `SOURCE` | by declared fingerprint | yes | yes |
 | `PURE` | total | yes | yes |
-| `RESIDENT` | stateful across runs | no | yes |
-| `STOCHASTIC` | none | opt-in only | **no** |
+| `RESIDENT` | stateful across runs | never (see below) | yes |
+| `STOCHASTIC` | none | never | **no** |
 
-The executor taints every artifact downstream of a `STOCHASTIC` node. A `Finding` whose
-provenance includes a tainted artifact cannot be marked verified. This is rule 2 of
-`CLAUDE.md` compiled into the runtime: an LLM cannot silently enter the detection path,
-because the graph will refuse to certify the result.
+The executor taints every artifact downstream of a `STOCHASTIC` node, unconditionally --
+`_detaint` forces `tainted=True` onto every `Finding` reachable in a tainted node's output,
+whether or not the node called `ctx.certify` (a 2026-09-16 review found omitting it was
+enough to bypass the boundary as previously built). This is rule 2 of `CLAUDE.md` compiled
+into the runtime: an LLM cannot silently enter the detection path, because the graph
+refuses to certify the result regardless of what the node itself does.
 
 `RESIDENT` vs ephemeral is the distinction from the reference architecture: resident nodes
 own long-lived state (indexes, baselines) and are addressed by identity; ephemeral nodes are
-constructed per run and are addressed by content.
+constructed per run and are addressed by content. A `RESIDENT` node's cache key is
+structural (node identity), computed once before any node executes -- it cannot reflect
+that the node's *actual output* may differ between two separate `Executor.run()` calls
+sharing one cache. `Graph.cache_unsafe_nodes()` therefore excludes `RESIDENT` nodes and
+everything downstream of them from caching entirely, rather than risk serving a stale
+result; a real fix (cache keys that incorporate a RESIDENT node's actual output) is not
+yet built.
+
+**Content-bearing propagation.** Orthogonal to `NodeKind`: a node's *effective*
+content-bearing status (`Graph.content_bearing_nodes()`) is its own declared
+`content_bearing`, OR any upstream's effective status -- propagating downstream by
+default, the same way taint does. Only a node that sets `declassifies = True` (presently
+just `Fingerprint`) resets that closure; everything else inherits sensitivity rather than
+losing it by omission.
 
 ## The analysis graph
 
