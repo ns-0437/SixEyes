@@ -49,6 +49,22 @@ default, the same way taint does. Only a node that sets `declassifies = True` (p
 just `Fingerprint`) resets that closure; everything else inherits sensitivity rather than
 losing it by omission.
 
+**RunScoped: the once-per-run value cache.** A node sometimes needs to resolve something
+expensive-or-external once (a file's bytes, a local secret key) and use that exact value
+both when `config_key()` computes its cache identity and later when `execute()` actually
+runs. A bare instance attribute for this is a trap two different nodes fell into
+independently: `JsonlSource` silently replayed a prior run's trace after its file was
+deleted (the failed refresh never cleared the old attribute), and `Fingerprint` cached a
+key-A cache-identity against key-B fingerprint output when the local key rotated between
+the two calls. `graph/run_scoped.py`'s `RunScoped` is the fix, used by both:
+`resolve(compute, force=True)` in `config_key()` (guaranteed to run first every
+`Executor.run()`, since `Graph.cache_keys()` completes before any node executes)
+invalidates the old value *before* attempting the new one, so a failed refresh can't leave
+stale data looking current; plain `resolve(compute)` in `execute()` reuses whatever that
+forced call just produced, so the two calls provably agree within one run, while a real
+change between two *separate* runs on a reused node instance still takes effect on the
+next one.
+
 ## The analysis graph
 
 ```
@@ -122,6 +138,7 @@ sixeyes/
 │   │   ├── cache.py           # content-addressed artifact cache
 │   │   ├── context.py         # RunContext, artifact store, taint tracking
 │   │   ├── executor.py        # async ready-queue scheduler, bounded concurrency
+│   │   ├── run_scoped.py      # RunScoped: resolve-once-per-run, never-stale value cache
 │   │   └── registry.py        # node registration / discovery
 │   ├── obs/
 │   │   └── trace.py           # per-node timing, cache hit/miss, run manifest
@@ -131,6 +148,7 @@ sixeyes/
 │   ├── fingerprint/           # Phase 2 (shipped)
 │   │   ├── types.py           # content-free: RequestFingerprint, DivergenceReport
 │   │   ├── tokenize.py        # word-boundary tokenizer (real BPE tokenizer: near-term)
+│   │   ├── keys.py            # local HMAC key: atomic first-use creation
 │   │   ├── fingerprint.py     # RawTrace -> content-free fingerprints (Fingerprint node)
 │   │   └── divergence.py      # consecutive-fingerprint comparison (Divergence node)
 │   ├── detect/                # Phase 3
