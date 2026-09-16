@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from sixeyes.fingerprint.divergence import Divergence
+from sixeyes.fingerprint.divergence import Divergence, compare
 from sixeyes.fingerprint.fingerprint import Fingerprint, _keyed_request_ref, fingerprint_request
 from sixeyes.fingerprint.types import DivergenceKind
 from sixeyes.graph import DiskCache, Executor, Graph
@@ -254,3 +254,55 @@ async def test_default_key_rotating_mid_run_does_not_poison_the_cache(tmp_path: 
     expected = fingerprint_request(second["source"].requests[0], key_a)
     assert second["fingerprint"][0].key_ref == expected.key_ref
     assert second["fingerprint"][0].segments == expected.segments
+
+
+async def test_full_lifecycle_across_all_three_2026_09_16_third_round_fixes(tmp_path: Path) -> None:
+    """None of the individual regressions above exercise the three third-round fixes
+    together across a realistic multi-run sequence on one shared graph/cache -- this does,
+    as an end-to-end guard against a future change to any one of RunScoped, JsonlSource, or
+    Fingerprint's key handling silently reintroducing a gap the isolated tests wouldn't
+    catch, in the interaction between the three rather than in any one alone.
+    """
+
+    def write(system: str, messages: list[dict[str, str]] | None = None) -> None:
+        path.write_text(
+            json.dumps({
+                "request_id": "r", "timestamp": 1.0, "model": "m",
+                "system": system, "messages": messages or [],
+            }),
+            encoding="utf-8",
+        )
+
+    path = tmp_path / "trace.jsonl"
+    write("alpha", [{"role": "user", "content": "hello"}])
+
+    graph = Graph("full_lifecycle")
+    graph.add(JsonlSource("source", path=str(path)))
+    graph.add(Fingerprint("fingerprint", key=TEST_KEY), trace="source")
+    graph.add(Divergence("divergence", workload_id="wl_lifecycle"), fingerprints="fingerprint")
+
+    executor = Executor(cache=DiskCache(root=tmp_path / "cache"))
+
+    # run 1: baseline
+    first = await executor.run(graph)
+    assert first["source"].requests[0].system == "alpha"
+
+    # run 2: edit the last message (not an append) -- must be reported, not hidden
+    write("alpha", [{"role": "user", "content": "hello extra instructions"}])
+    second = await executor.run(graph)
+    assert len(second["divergence"]) == 0  # only one request per run -- nothing to compare yet
+    edited_fp = fingerprint_request(second["source"].requests[0], TEST_KEY)
+    baseline_fp = fingerprint_request(first["source"].requests[0], TEST_KEY)
+    assert compare("wl_lifecycle", baseline_fp, edited_fp).kind is DivergenceKind.MESSAGES_CHANGED
+
+    # run 3: the file goes missing -- must fail, not replay run 2's trace
+    path.unlink()
+    with pytest.raises(Exception):
+        await executor.run(graph)
+
+    # run 4: restored with new content -- must be processed fresh, not skipped or stale
+    write("gamma", [{"role": "user", "content": "hello extra instructions"}])
+    fourth = await executor.run(graph)
+    assert fourth["source"].requests[0].system == "gamma"
+    gamma_fp = fingerprint_request(fourth["source"].requests[0], TEST_KEY)
+    assert compare("wl_lifecycle", edited_fp, gamma_fp).kind is DivergenceKind.SYSTEM_CHANGED
