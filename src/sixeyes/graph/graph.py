@@ -272,25 +272,27 @@ class Graph:
 
     def cache_unsafe_nodes(self) -> frozenset[str]:
         """Nodes whose structural (identity-based) cache key cannot be trusted to reflect
-        their actual runtime output: RESIDENT nodes themselves, and everything downstream
-        of one.
+        their actual runtime output: `RESIDENT` and `STOCHASTIC` nodes themselves, and
+        everything downstream of one.
 
-        RESIDENT nodes may return a different value on every invocation by design (an
-        index, a baseline) while `Graph.cache_keys()` is computed once from node identity,
-        before any node has executed -- it has no way to see that a RESIDENT node's output
-        actually changed between two separate `Executor.run()` calls sharing one cache. A
-        PURE descendant's key is therefore stable across runs even when its real input
-        changed, which serves a stale result. Until cache keys can incorporate a RESIDENT
-        node's actual output (a real fix, not yet built), the safe interim behaviour is to
-        never persist-or-reuse a cached result for anything in this closure -- always
-        recompute, the same conservative default `content_bearing` gets under a
-        persistent cache.
+        Both kinds may return a different value on every invocation by design -- a
+        RESIDENT node's internal state, or a STOCHASTIC node's inherent randomness -- while
+        `Graph.cache_keys()` is computed once from node identity, before any node has
+        executed. It has no way to see that either kind's output actually changed between
+        two separate `Executor.run()` calls sharing one cache. A `PURE` descendant's key is
+        therefore stable across runs even when its real input changed, which serves a
+        stale result -- a 2026-09-16 follow-up review demonstrated this for a STOCHASTIC
+        descendant specifically; the RESIDENT case was already covered. Until cache keys
+        can incorporate a node's actual runtime output (a real fix, not yet built), the
+        safe interim behaviour is to never persist-or-reuse a cached result for anything in
+        this closure -- always recompute, the same conservative default `content_bearing`
+        gets under a persistent cache.
         """
         self.validate()
         unsafe: set[str] = set()
         for node_id in self._topological_order():
             node = self._nodes[node_id]
-            if node.kind is NodeKind.RESIDENT or any(
+            if node.kind in (NodeKind.RESIDENT, NodeKind.STOCHASTIC) or any(
                 up in unsafe for up in self._wiring[node_id].values()
             ):
                 unsafe.add(node_id)

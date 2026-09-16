@@ -179,3 +179,34 @@ async def test_pure_descendant_of_resident_is_not_stale() -> None:
 
     assert (r1["source"], r1["double"]) == (1, 2)
     assert (r2["source"], r2["double"]) == (2, 4), "double() served a stale result"
+
+
+async def test_pure_descendant_of_stochastic_is_not_stale() -> None:
+    """Regression (independent follow-up review, 2026-09-16): the RESIDENT fix above
+    didn't extend to STOCHASTIC, which has the identical structural problem -- a PURE
+    descendant's cache key can't see that a STOCHASTIC upstream's sample changed between
+    two runs. Graph.cache_unsafe_nodes now covers both kinds."""
+    from sixeyes.graph import NodeKind
+
+    calls = {"n": 0}
+
+    @node(output=int, kind=NodeKind.STOCHASTIC)
+    async def sample(ctx: Any) -> int:
+        calls["n"] += 1
+        return calls["n"]
+
+    @node(output=int)
+    async def doubled(ctx: Any, x: int) -> int:
+        return 2 * x
+
+    graph = Graph("stochastic_descendant")
+    graph.add(sample("source"))
+    graph.add(doubled("double"), x="source")
+
+    cache = MemoryCache()
+    executor = Executor(cache=cache)
+    r1 = await executor.run(graph)
+    r2 = await executor.run(graph)
+
+    assert (r1["source"], r1["double"]) == (1, 2)
+    assert (r2["source"], r2["double"]) == (2, 4), "double() served a stale result"
