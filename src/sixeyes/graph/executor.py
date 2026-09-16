@@ -50,6 +50,16 @@ def _detaint(value: Any, node_id: str) -> Any:
     for a finding an LLM produced. `ctx.certify` remains useful for a clean path (it stamps
     proper node_ids and raises loudly, during execution, if a node author calls it on a
     tainted path by mistake) but it was never the actual safety mechanism; this is.
+
+    Recurses through `Finding`, `FindingSet`, `tuple`, `list`, and `dict` (values only --
+    keys are not walked; a Finding used as a dict key would be unusual enough to treat as
+    unsupported rather than add a second, riskier traversal path for). A 2026-09-16
+    follow-up review found `dict` missing -- `{"finding": make_finding()}` from a
+    STOCHASTIC node passed through untouched. This is a whitelist of supported output
+    shapes, not a generic object walker: a node wrapping a Finding inside some other
+    container or a custom class attribute is NOT covered, and must not be done without
+    extending this function to match -- an unbounded "walk any object's __dict__" widens
+    the surface in ways that are hard to reason about being complete.
     """
     if isinstance(value, Finding):
         if value.provenance.tainted:
@@ -63,6 +73,8 @@ def _detaint(value: Any, node_id: str) -> Any:
         return tuple(_detaint(v, node_id) for v in value)
     if isinstance(value, list):
         return [_detaint(v, node_id) for v in value]
+    if isinstance(value, dict):
+        return {k: _detaint(v, node_id) for k, v in value.items()}
     return value
 
 
@@ -193,6 +205,18 @@ class Executor:
         node = graph.node(node_id)
         tainted = node_id in root_ctx.tainted_nodes
         is_content_bearing = node_id in content_bearing_nodes
+        # Distinct from is_content_bearing (the node's *effective output* classification,
+        # which is False for a declassifying node like Fingerprint by design): this is
+        # whether the node's INPUT -- what it actually holds in scope while executing --
+        # includes content-bearing data. A declassifying node still processes raw content
+        # during execution, before it produces its (genuinely content-free) output; if it
+        # raises mid-execution, that raw content can be embedded in the exception message.
+        # A 2026-09-16 follow-up review demonstrated exactly this: redacting based on
+        # output classification let a failed declassifier's error carry its raw input
+        # straight into the manifest, because its *output* was (correctly) classified safe.
+        handles_content_bearing_input = node.content_bearing or any(
+            up in content_bearing_nodes for up in graph.upstreams(node_id).values()
+        )
         started = time.perf_counter()
 
         # CLAUDE.md rule 3: a content-bearing node's *effective* output (its own, or
@@ -249,7 +273,7 @@ class Executor:
             # persisted/exportable manifest record is redacted.
             error_text = (
                 f"{type(exc).__name__} (message suppressed: node handles customer content)"
-                if is_content_bearing
+                if handles_content_bearing_input
                 else f"{type(exc).__name__}: {exc}"
             )
             manifest.record(

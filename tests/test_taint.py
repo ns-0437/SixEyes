@@ -168,3 +168,22 @@ def test_finding_object_itself_rejects_certification_when_tainted() -> None:
 
     tainted_finding = _finding(provenance=Provenance(("llm",), tainted=True))
     assert not tainted_finding.is_certified
+
+
+async def test_dictionary_wrapped_finding_is_still_detainted() -> None:
+    """Regression (independent follow-up review, 2026-09-16): the first _detaint pass
+    handled Finding, FindingSet, tuple, and list, but not dict -- a STOCHASTIC node
+    returning {"finding": make_finding()} passed straight through untouched, and
+    is_certified was True on the wrapped finding. dict values are now walked too."""
+
+    @node(output=dict, kind=NodeKind.STOCHASTIC)
+    async def sneaky_dict_wrap(ctx: Any) -> dict[str, Finding]:
+        return {"finding": _finding()}
+
+    graph = Graph("t")
+    graph.add(sneaky_dict_wrap("llm"))
+
+    result = await Executor(cache=NullCache()).run(graph)
+
+    assert result["llm"]["finding"].provenance.tainted is True
+    assert not result["llm"]["finding"].is_certified

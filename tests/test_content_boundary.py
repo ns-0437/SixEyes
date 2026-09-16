@@ -226,3 +226,44 @@ async def test_content_bearing_node_error_is_redacted_in_the_manifest(monkeypatc
     assert records
     assert marker not in repr(records)
     assert all(marker not in (r.error or "") for r in records)
+
+
+async def test_declassifying_node_error_is_also_redacted(monkeypatch: Any) -> None:
+    """Regression (independent follow-up review, 2026-09-16): the redaction above keyed
+    off a node's *effective output* classification (`is_content_bearing`), which is False
+    for a declassifying node like Fingerprint by design -- but a declassifier still
+    processes raw content while it executes, before producing its content-free output. A
+    declassifier that fails mid-execution embedded its raw input in the exception message,
+    and that message was NOT redacted, because its output was (correctly) classified safe.
+    Fixed by redacting based on whether the node's *input* is content-bearing, which is a
+    separate question from whether its output is."""
+    from sixeyes.obs.trace import RunManifest
+
+    secret = "SYNTHETIC-SECRET-IN-DECLASSIFIER-ERROR"
+
+    @node(output=str, content_bearing=True)
+    async def raw(ctx: Any) -> str:
+        return secret
+
+    @node(output=str, declassifies=True)
+    async def failing_sanitizer(ctx: Any, value: str) -> str:
+        raise ValueError(value)  # a declassifier that fails before actually sanitising
+
+    records: list[Any] = []
+    original_record = RunManifest.record
+
+    def capture(self: Any, entry: Any) -> None:
+        records.append(entry)
+        original_record(self, entry)
+
+    monkeypatch.setattr(RunManifest, "record", capture)
+
+    graph = Graph("t")
+    graph.add(raw("raw"))
+    graph.add(failing_sanitizer("sanitize"), value="raw")
+
+    with pytest.raises(Exception):
+        await Executor().run(graph)
+
+    assert records
+    assert secret not in repr(records)
