@@ -1,8 +1,24 @@
 """Content-free fingerprints and divergence reports.
 
-Everything here is safe to persist, log, and emit in a report: every field is a hash,
-a count, or an offset. This is the boundary CLAUDE.md rule 3 draws -- nothing upstream of
+Everything here is safe to persist, log, and emit in a report: every field is a hash, a
+count, or an offset. This is the boundary CLAUDE.md rule 3 draws -- nothing upstream of
 this module (see sixeyes.ingest.types) may cross it; everything at or downstream of it may.
+
+Two corrections from the original design, both driven by an independent review verified
+against primary sources and reproduced locally (2026-09-16):
+
+1. Anthropic's documented cache-prefix order is ``tools, system, messages`` -- model is a
+   separate cache-*compatibility* dimension (different models can't share a cache entry at
+   all), not a token at position zero inside the prefix. `RequestFingerprint.model_digest`
+   is compared first and independently; `segments` covers only tools/system/messages, in
+   that order.
+2. Segments are hashed *independently* (each with its own seed), not as one continuous
+   chain. A continuous chain meant deleting an earlier segment (e.g. the whole system
+   prompt) shifted every later segment's absolute position, and the comparison attributed
+   the resulting mismatch to whichever segment happened to occupy that shifted index --
+   typically `messages`, even when the actual cause was the system prompt disappearing.
+   Independent per-segment chains can't suffer that misattribution: removing `system`
+   changes only `system`'s own chain, never `messages`'s.
 """
 
 from __future__ import annotations
@@ -13,50 +29,61 @@ from typing import Any
 
 from sixeyes.core.ids import Digest
 
-SegmentKind = str  # "model" | "system" | "tools" | "messages" -- see fingerprint.fingerprint
+SegmentKind = str  # "tools" | "system" | "messages" -- see fingerprint.fingerprint
+
+SEGMENT_ORDER: tuple[SegmentKind, ...] = ("tools", "system", "messages")
+"""Anthropic's documented prompt-caching prefix order (verified against their live docs,
+2026-09-16): https://platform.claude.com/docs/en/build-with-claude/prompt-caching --
+"Cache prefixes are created in the following order: tools, system, then messages." A
+divergence in an earlier segment here is reported in preference to one in a later segment,
+because that's the order a real cache-breaking change actually happens in."""
 
 
 @dataclass(frozen=True, slots=True)
-class SegmentSpan:
-    """Where one structural segment lives within a request's combined token chain.
-
-    Spans are contiguous and ordered (model, system, tools, messages) because that's the
-    order a provider concatenates a request into a single prefix for caching purposes --
-    a divergence anywhere invalidates everything after it, which is exactly what walking
-    the combined chain index-by-index captures.
-    """
+class SegmentFingerprint:
+    """A content-free, independently-seeded fingerprint of one structural segment."""
 
     kind: SegmentKind
-    start: int
-    length: int
+    unit_count: int
+    chain: tuple[Digest, ...]
+    """Keyed rolling hash chain (see fingerprint.keys / fingerprint.fingerprint), one
+    entry per whitespace-preserving unit -- see fingerprint.tokenize for exactly what a
+    "unit" is. This is *not* a provider/BPE token count; do not present it as one."""
 
     def content_key(self) -> Any:
-        return [self.kind, self.start, self.length]
+        return [self.kind, self.unit_count, list(self.chain)]
 
 
 @dataclass(frozen=True, slots=True)
 class RequestFingerprint:
-    """A content-free fingerprint of one request, safe to cache, log, and compare."""
+    """A content-free fingerprint of one request, safe to cache, log, and compare.
 
-    request_id: str
+    `request_ref` is a one-way digest of the customer-supplied request id, not the id
+    itself -- an arbitrary customer-controlled string field is not safe to assume is
+    non-sensitive metadata (a request id is exactly the kind of field someone might, by
+    mistake or by convention, stuff a real identifier into).
+    """
+
+    request_ref: Digest
     timestamp: float
-    token_count: int
-    chain: tuple[Digest, ...]
-    """Rolling hash chain, one entry per token: chain[i] = H(chain[i-1], token_i). Two
-    fingerprints share a common prefix of exactly the length of their longest matching
-    chain prefix -- this is what makes divergence localization exact rather than
-    approximate."""
-    spans: tuple[SegmentSpan, ...]
+    model_digest: Digest
+    """Content-free digest of the model identifier. Compared for exact equality only --
+    a model change invalidates cache compatibility entirely, independent of prefix order."""
+    segments: tuple[SegmentFingerprint, ...]
+    """Exactly one entry per kind in SEGMENT_ORDER, in that order."""
 
     def content_key(self) -> Any:
-        return [self.request_id, self.timestamp, self.token_count, list(self.chain),
-                list(self.spans)]
+        return [self.request_ref, self.timestamp, self.model_digest, list(self.segments)]
 
-    def segment_at(self, index: int) -> SegmentSpan:
-        for span in self.spans:
-            if span.start <= index < span.start + span.length:
-                return span
-        raise IndexError(f"token index {index} is outside all segments (0..{self.token_count})")
+    def segment(self, kind: SegmentKind) -> SegmentFingerprint:
+        for seg in self.segments:
+            if seg.kind == kind:
+                return seg
+        raise KeyError(f"no segment of kind {kind!r}")
+
+    @property
+    def total_units(self) -> int:
+        return sum(seg.unit_count for seg in self.segments)
 
 
 class DivergenceKind(str, Enum):
@@ -73,9 +100,8 @@ class DivergenceKind(str, Enum):
 
 
 _KIND_BY_SEGMENT = {
-    "model": DivergenceKind.MODEL_CHANGED,
-    "system": DivergenceKind.SYSTEM_CHANGED,
     "tools": DivergenceKind.TOOLS_CHANGED,
+    "system": DivergenceKind.SYSTEM_CHANGED,
     "messages": DivergenceKind.MESSAGES_CHANGED,
 }
 
@@ -88,23 +114,36 @@ def divergence_kind_for_segment(segment_kind: SegmentKind) -> DivergenceKind:
 class DivergenceReport:
     """The result of comparing two consecutive requests' fingerprints.
 
-    `kind is DivergenceKind.NONE` means the shorter chain is a true prefix of the longer
-    one -- healthy conversation growth (or a harmlessly shorter follow-up), not a cache
-    problem. Anything else means some token inside the shared range actually changed.
+    `kind is DivergenceKind.NONE` means every segment's chain is either identical or a
+    genuine append-only extension of the previous one. Anything else means some segment
+    changed in a way this analyzer cannot prove is safe -- including a truncation with a
+    matching shared prefix: the evidence available here cannot establish that a shortened
+    segment still hits whatever cache breakpoint the customer's own code placed, so it is
+    reported, not silently treated as harmless (a prior version of this type made that
+    stronger claim; an independent review correctly identified it as unproven).
+
+    This report is a *structural divergence*, not a proof of wasted spend: a changed
+    request may still reuse an earlier cache entry the fingerprint has no visibility into
+    (differently-scoped cache_control breakpoints, provider-side eviction, etc.), and an
+    *unchanged* request can still miss if the provider's cache entry simply expired.
+    Combining this with actual observed usage (RawRequest.usage_*) and a dated price table
+    is a separate, later step -- see core.types.Confidence and CLAUDE.md rule 1.
     """
 
     workload_id: str
-    previous_request_id: str
-    request_id: str
+    previous_request_ref: Digest
+    request_ref: Digest
     kind: DivergenceKind
     segment_offset: int = 0
-    """Token offset within the diverging segment (0 when kind is NONE)."""
-    combined_offset: int = 0
-    """Token offset within the full combined chain."""
-    cache_missed_tokens: int = 0
-    """Tokens in the *new* request from combined_offset onward -- an estimate of how much
-    cacheable prefix was lost, mirroring Anthropic's cache_missed_input_tokens semantics."""
+    """Unit offset within the diverging segment (0 when kind is NONE or MODEL_CHANGED)."""
+    cache_missed_units: int = 0
+    """Units in the *new* request, from the divergence point onward, across the
+    diverging segment and everything after it in SEGMENT_ORDER -- an estimate of how much
+    cacheable prefix was lost, mirroring the shape of Anthropic's own
+    cache_missed_input_tokens, in whitespace units rather than provider tokens. Anthropic
+    documents its own estimate as unsuitable for billing; treat this one the same way --
+    it is Confidence.DERIVED at best, never a measured dollar figure on its own."""
 
     def content_key(self) -> Any:
-        return [self.workload_id, self.previous_request_id, self.request_id, self.kind.value,
-                self.segment_offset, self.combined_offset, self.cache_missed_tokens]
+        return [self.workload_id, self.previous_request_ref, self.request_ref, self.kind.value,
+                self.segment_offset, self.cache_missed_units]

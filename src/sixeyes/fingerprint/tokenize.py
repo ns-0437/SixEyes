@@ -1,22 +1,30 @@
-"""Text -> token boundaries.
+"""Text -> whitespace-preserving units.
 
-This is a whitespace tokenizer, not a real BPE tokenizer (tiktoken or equivalent). It is
-honest about that limitation rather than calling itself "token-boundary" precision it
-doesn't have: it proves the localization *mechanism* -- finding the exact point two
-requests diverge, without ever storing the text itself -- correctly and deterministically,
-offline, with no dependency. Swapping in a real subword tokenizer later is a drop-in
-replacement of `tokenize()` and does not change anything about the fingerprinting or
-divergence logic built on top of it. Tracked as a near-term item in docs/PHASES.md.
+This is not a real BPE/subword tokenizer. It proves the localization *mechanism* --
+finding the exact point two requests diverge, without ever storing the text itself --
+correctly and deterministically, offline, with no dependency. A "unit" here is either a
+maximal run of non-whitespace characters or a maximal run of whitespace characters; the
+concatenation of a text's units always exactly reconstructs the original string, which is
+what makes a whitespace-only edit (`"Be helpful"` vs `"Be  helpful"`) detectable -- an
+earlier version split only on non-whitespace runs and silently discarded whitespace,
+making the two strings indistinguishable.
+
+A `unit_offset` reported anywhere in this package is an offset into this whitespace-unit
+sequence, never a provider/BPE token index -- the two are different units of measurement
+and must not be presented as interchangeable. Swapping in a real tokenizer later is a
+drop-in replacement of `tokenize()`; it does not change anything about the fingerprinting
+or divergence logic built on top of it, but it does change what a unit *means*, so any
+report surfacing this value must keep saying "unit," not "token," until that swap happens.
 """
 
 from __future__ import annotations
 
 import re
 
-_WORD_RE = re.compile(r"\S+")
+_UNIT_RE = re.compile(r"\S+|\s+")
 
 
 def tokenize(text: str) -> tuple[str, ...]:
-    """Split on whitespace runs. Deterministic, offline, and sufficient to prove that a
-    single changed word (a timestamp, a request id) is localized to its exact position."""
-    return tuple(_WORD_RE.findall(text))
+    """Split into whitespace-preserving units. Deterministic, offline, and exact: joining
+    the result with `""` always reconstructs `text` byte-for-byte."""
+    return tuple(_UNIT_RE.findall(text))
