@@ -26,6 +26,7 @@ class NodeRecord:
     outcome: NodeOutcome
     duration_ms: float
     tainted: bool
+    content_bearing: bool = False
     error: str | None = None
 
 
@@ -61,6 +62,13 @@ class RunManifest:
     @property
     def tainted_nodes(self) -> tuple[str, ...]:
         return tuple(r.node_id for r in self.records if r.tainted)
+
+    @property
+    def content_bearing_nodes(self) -> tuple[str, ...]:
+        """Nodes whose output may hold raw customer content. Cross-reference against
+        `cache_key` outcomes to audit that none of these ever landed in a persistent
+        cache -- exactly the claim CLAUDE.md rule 3 makes."""
+        return tuple(r.node_id for r in self.records if r.content_bearing)
 
     def to_dict(self) -> dict[str, Any]:
         return {

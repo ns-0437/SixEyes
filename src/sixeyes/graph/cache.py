@@ -30,8 +30,19 @@ class ArtifactCache(Protocol):
     def has(self, key: Digest) -> bool: ...
 
 
+#: Whether entries in this cache outlive the process (written to disk, a remote store,
+#: etc.). The executor checks this before caching a `content_bearing` node's output --
+#: see graph/executor.py -- so raw customer content is never written somewhere that
+#: survives the run. Duck-typed rather than part of the Protocol so a cache that forgets
+#: to declare it is treated as non-persistent (the safe default: never skipped, always
+#: recomputed) rather than erroring.
+PERSISTENT_CACHE_ATTR = "persistent"
+
+
 class NullCache:
     """Disables caching. Used by tests that assert a node actually executed."""
+
+    persistent = False
 
     def get(self, key: Digest) -> Any:
         return _MISS
@@ -44,7 +55,13 @@ class NullCache:
 
 
 class MemoryCache:
-    """Process-local cache. Default for single-shot CLI runs."""
+    """Process-local cache. Default for single-shot CLI runs.
+
+    Not persistent: it is discarded with the process, so it is safe for content-bearing
+    node output to pass through it.
+    """
+
+    persistent = False
 
     def __init__(self) -> None:
         self._store: dict[Digest, Any] = {}
@@ -77,7 +94,12 @@ class DiskCache:
     process on the same machine, and entries are addressed by a hash of their own
     provenance. If artifacts ever cross a trust boundary this must become a schema-checked
     format — a note for whoever builds the server.
+
+    Persistent: outlives the process. The executor never writes a `content_bearing`
+    node's output here (CLAUDE.md rule 3) -- see graph/executor.py.
     """
+
+    persistent = True
 
     def __init__(self, root: Path | str = ".sixeyes-cache") -> None:
         self.root = Path(root)

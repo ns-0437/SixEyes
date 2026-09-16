@@ -57,6 +57,14 @@ class Node(ABC):
     inputs: ClassVar[Mapping[str, type]] = {}
     output: ClassVar[type] = object
 
+    content_bearing: ClassVar[bool] = False
+    """True if this node's output may hold raw customer content (prompt text, tool
+    arguments, document text) rather than content-free fingerprints. Per CLAUDE.md rule 3,
+    the executor refuses to persist such output to a persistent cache (e.g. DiskCache) --
+    it always recomputes rather than risk writing customer content to disk. This is the
+    same enforcement pattern as NodeKind.STOCHASTIC taint (rule 2): the boundary is upheld
+    by the runtime, not by convention."""
+
     def __init__(self, node_id: str, **config: Any) -> None:
         if not node_id or not node_id.replace("_", "").replace(".", "").isalnum():
             raise GraphBuildError(
@@ -103,6 +111,7 @@ def node(
     version: str = "1",
     output: type,
     inputs: Mapping[str, type] | None = None,
+    content_bearing: bool = False,
 ) -> Callable[[Callable[..., Awaitable[Any]]], type[Node]]:
     """Turn an async function into a Node class.
 
@@ -151,6 +160,7 @@ def node(
             "version": version,
             "inputs": declared,
             "output": output,
+            "content_bearing": content_bearing,
             "_fn": staticmethod(fn),
             "__doc__": fn.__doc__,
             "__module__": fn.__module__,

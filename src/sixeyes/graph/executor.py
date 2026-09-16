@@ -161,7 +161,14 @@ class Executor:
         tainted = node_id in root_ctx.tainted_nodes
         started = time.perf_counter()
 
-        if node.kind.is_cacheable:
+        # CLAUDE.md rule 3: a content-bearing node's output never reaches a persistent
+        # cache. It is always recomputed rather than risk raw customer content landing on
+        # disk between runs. Non-persistent caches (MemoryCache, NullCache) are unaffected
+        # -- they die with the process, so passing content through them is safe.
+        cache_is_persistent = getattr(self.cache, "persistent", False)
+        use_cache = node.kind.is_cacheable and not (node.content_bearing and cache_is_persistent)
+
+        if use_cache:
             cached = self.cache.get(cache_key)
             if not is_miss(cached):
                 manifest.record(
@@ -173,6 +180,7 @@ class Executor:
                         outcome="cache_hit",
                         duration_ms=(time.perf_counter() - started) * 1000,
                         tainted=tainted,
+                        content_bearing=node.content_bearing,
                     )
                 )
                 return cached
@@ -196,12 +204,13 @@ class Executor:
                     outcome="failed",
                     duration_ms=(time.perf_counter() - started) * 1000,
                     tainted=tainted,
+                    content_bearing=node.content_bearing,
                     error=f"{type(exc).__name__}: {exc}",
                 )
             )
             raise GraphExecutionError(node_id, exc) from exc
 
-        if node.kind.is_cacheable:
+        if use_cache:
             self.cache.put(cache_key, value)
 
         manifest.record(
@@ -213,6 +222,7 @@ class Executor:
                 outcome="executed",
                 duration_ms=(time.perf_counter() - started) * 1000,
                 tainted=tainted,
+                content_bearing=node.content_bearing,
             )
         )
         return value
