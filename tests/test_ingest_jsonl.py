@@ -86,3 +86,22 @@ def test_defaults_are_applied_for_optional_fields() -> None:
     assert req.system is None
     assert req.tools == ()
     assert req.usage_input_tokens is None
+
+
+def test_malformed_timestamp_error_does_not_echo_the_raw_value() -> None:
+    """A malformed field can itself carry customer content (a secret pasted into the
+    wrong field) -- float()'s own ValueError embeds the raw value verbatim, so it must be
+    caught and replaced with a sanitised message before it ever reaches a caller, rather
+    than relying on a downstream redaction layer to catch it after the fact."""
+    import json
+
+    marker = "SYNTHETIC-SECRET-IN-BAD-TIMESTAMP"
+    obj = {"request_id": "r", "timestamp": marker, "model": "m", "messages": []}
+
+    with pytest.raises(JsonlFormatError) as excinfo:
+        parse_line(json.dumps(obj), line_no=3)
+
+    assert marker not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None  # `from None` -- no chained exception carries it either
+    assert "timestamp" in str(excinfo.value)
+    assert excinfo.value.line_no == 3

@@ -28,6 +28,7 @@ import json
 from pathlib import Path
 from typing import Any, ClassVar
 
+from sixeyes.core.ids import hash_bytes
 from sixeyes.graph.context import RunContext
 from sixeyes.graph.node import Node, NodeKind
 from sixeyes.ingest.types import RawMessage, RawRequest, RawToolDef, RawTrace
@@ -52,6 +53,24 @@ def _require(obj: dict[str, Any], field: str, line_no: int) -> Any:
     if field not in obj:
         raise JsonlFormatError(line_no, f"missing required field {field!r}")
     return obj[field]
+
+
+def _require_float(obj: dict[str, Any], field: str, line_no: int) -> float:
+    """Like `_require`, but for a field that must convert to float.
+
+    Deliberately does not include the raw value in the raised error: a malformed field
+    can itself contain customer content (a secret pasted into the wrong field, a stray
+    string where a number was expected), and `float(x)`'s own ValueError embeds `x`
+    verbatim in its message -- which would otherwise flow straight into the run manifest
+    (see graph/executor.py's redaction, which only helps if the exception it wraps didn't
+    already leak the value in the first place)."""
+    value = _require(obj, field, line_no)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise JsonlFormatError(
+            line_no, f"field {field!r} must be a number (got type {type(value).__name__})"
+        ) from None
 
 
 def _parse_message(raw: dict[str, Any], line_no: int) -> RawMessage:
@@ -84,7 +103,7 @@ def parse_line(line: str, line_no: int) -> RawRequest:
     usage = obj.get("usage", {}) or {}
     return RawRequest(
         request_id=str(_require(obj, "request_id", line_no)),
-        timestamp=float(_require(obj, "timestamp", line_no)),
+        timestamp=_require_float(obj, "timestamp", line_no),
         model=str(_require(obj, "model", line_no)),
         system=obj.get("system"),
         tools=tuple(_parse_tool(t, line_no) for t in obj.get("tools", [])),
@@ -110,6 +129,11 @@ class JsonlSource(Node):
     """Reads a JSONL trace export from disk.
 
     Config: `path` (str | Path), `workload_id` (str, defaults to the file stem).
+
+    The file is read twice per execution attempt (once for the cache-key digest in
+    `config_key`, once to actually parse in `execute`) -- a deliberate simplicity-over-
+    throughput tradeoff for now (CLAUDE.md rule 9); worth a `ctx.scratch`-cached read if a
+    real workload's file sizes make it matter.
     """
 
     kind = NodeKind.SOURCE
@@ -127,13 +151,18 @@ class JsonlSource(Node):
         return trace
 
     def config_key(self) -> Any:
-        # SOURCE nodes are cache-keyed by their *declared* fingerprint (rule: cacheable by
-        # declared fingerprint), not by re-reading the file -- mtime stands in for content
-        # here so an unchanged file is a cache hit and an edited one isn't, without hashing
-        # the (content-bearing) file body itself into a cache key.
+        # Keyed by a hash of the file's actual bytes, not mtime: mtime is only a proxy for
+        # "did the content change," and a proxy can be wrong -- a preserved or coarse-
+        # grained mtime after an edit previously left every downstream node (Fingerprint,
+        # Divergence) serving stale, structurally-inconsistent output against a source
+        # that had, in fact, changed. A whole-file SHA-256 is safe to fold into a cache key
+        # (a directory-lookup string) even though it's derived from content: unlike the
+        # per-token chain in fingerprint.fingerprint, there is no adjacent "previous
+        # digest" exposed here for an attacker to mount the same word-by-word dictionary
+        # test against -- it is one opaque digest of the whole file, not a chain.
         path = Path(self.config["path"])
         try:
-            mtime = path.stat().st_mtime_ns
+            digest = hash_bytes(path.read_bytes())
         except FileNotFoundError:
-            mtime = None
-        return {"path": str(path), "workload_id": self.config.get("workload_id"), "mtime": mtime}
+            digest = None
+        return {"path": str(path), "workload_id": self.config.get("workload_id"), "content_digest": digest}

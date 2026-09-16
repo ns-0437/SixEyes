@@ -50,9 +50,12 @@ class RawMessage:
 class RawRequest:
     """One model call, normalized from whatever trace format it arrived in.
 
-    Field order matters for fingerprinting: model, system, tools, messages is the order
-    a provider concatenates them into a prefix for caching purposes, and it's the order
-    `fingerprint.fingerprint` walks them in.
+    `model` is a cache-*compatibility* dimension, not part of the ordered prefix: per
+    Anthropic's documented behaviour (verified 2026-09-16), the prefix a provider
+    concatenates for caching purposes is `tools, system, messages`, in that order --
+    `fingerprint.fingerprint` walks segments in that same order and checks `model`
+    separately and first. An earlier version of this docstring said `model, system, tools,
+    messages`, which was simply wrong; a 2026-09-16 review caught it.
     """
 
     request_id: str
