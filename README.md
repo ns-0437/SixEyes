@@ -22,7 +22,11 @@ doesn't mean.
 
 SixEyes reads a JSONL trace export and reports, for each pair of consecutive requests,
 whether the model, system prompt, tool definitions, or message history changed — and if
-so, exactly which field and at what offset. That is a **structural divergence**, not a
+so, the first differing segment and a unit offset within it. That's coarser than it might
+sound: it names *which of four segments* diverged and *where in that segment's token
+stream*, not every nested field that changed, and the offset is in our own tokenizer's
+units (see `docs/PHASES.md`'s tokenizer note), not a provider's actual token index. That
+is a **structural divergence**, not a
 dollar figure and not proof that anything actually cost money: an unchanged request can
 still miss a provider's cache if the entry simply expired, and a changed request can
 still hit one if the change fell outside the cached prefix. `DivergenceReport` (see the
