@@ -352,3 +352,24 @@ async def test_fresh_sources_do_not_collide_after_object_id_reuse(tmp_path: Path
     assert second["source"].requests[0].system == "bravo"
     expected = fingerprint_request(second_trace.requests[0], TEST_KEY)
     assert second["fp"][0].segments == expected.segments
+
+
+@pytest.mark.parametrize("field", ["role", "tool_type", "tool_call_type"])
+def test_rejected_enum_values_are_never_echoed_in_the_error(field: str) -> None:
+    """A field that looks like a small fixed enum (role, tool type) is still untrusted
+    input until validated -- a planted sensitive marker used as the value must never
+    appear in the resulting AgentFuseShapeError, only a description of what was expected."""
+    secret = "SYNTHETIC-SENSITIVE-VALUE"
+    client = ScriptedClient([_text_response("done")])
+    messages: list[dict[str, Any]] = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+    tools: list[dict[str, Any]] = []
+    if field == "role":
+        messages.append({"role": secret, "content": "x"})
+    elif field == "tool_type":
+        tools = [{"type": secret}]
+    else:
+        messages.append({"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": secret}]})
+    client.chat.completions.create(model="m", messages=messages, tools=tools)
+    with pytest.raises(AgentFuseShapeError) as excinfo:
+        convert_captured_calls(client.captured, workload_id="wl")
+    assert secret not in str(excinfo.value)
