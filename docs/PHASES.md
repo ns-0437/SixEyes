@@ -3,6 +3,34 @@
 One phase at a time. A phase is done when its tests pass and its exit criterion is met.
 No starting phase N+1 with phase N red.
 
+## Current execution checkpoint — 2026-09-17
+
+The offline AgentFuse pilot now accepts the real adapter's tool-use requests rather
+than only proving their rejection. `RawToolChoice` preserves supported explicit choices;
+Fingerprint v7 HMACs them separately and Divergence v4 reports control changes without
+inventing provider-prefix offsets or affected-token estimates. Missing and explicit
+default choices are intentionally distinct.
+
+`python -m pilots.agentfuse` runs the actual AgentFuse adapter with synthetic responses
+and an in-memory tool router. Stable growth, injected system drift, and a restart after
+an established tool turn produce reviewable text/JSON reports. The demo's monitor only
+triggers the adapter's restart branch; it does not validate AgentFuse's own detectors.
+The drift scenario intentionally changes a captured fixture, not a production request.
+See `docs/PILOT.md` for setup and the exact evidence boundary.
+
+Unknown input key names are now redacted as well as invalid values. The source trace
+binding lives outside mutable node config. The selected report exports no raw content
+or arbitrary workload/model labels. Tests exercise actual adapter behavior, malformed
+shapes, report privacy and outbound-connection rejection. CI is configured for Python
+3.11/3.12 on Windows/Linux with the AgentFuse revision pinned in requirements-pilot.txt.
+Local verification and remote CI results must be reported separately.
+
+**Next:** obtain the owner's task/data scope and execution budget; run one controlled
+session locally; ask whether its structural observation is new, actionable and worth
+paying to investigate. Any applied fix needs separate quality and observed-usage checks.
+Synthetic fixtures are not one of the five real workloads and provide no savings claim.
+Do not start Phase 4 economics or expand infrastructure on this evidence alone.
+
 **Open flag — naming:** the company is called SixEyes by founder decision (2026-08-24).
 Trademark clearance (USPTO TESS, IP India, EUIPO TMview, WIPO Global Brand Database,
 classes 9 and 42) has not been run. No domain purchase, trademark filing, or paid

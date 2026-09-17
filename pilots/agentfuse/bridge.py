@@ -39,6 +39,7 @@ from typing import Any, Callable, ClassVar
 from sixeyes.graph.context import RunContext
 from sixeyes.graph.node import Node, NodeKind
 from sixeyes.ingest.jsonl import canonical_json
+from sixeyes.ingest.tool_choice import parse_tool_choice
 from sixeyes.ingest.types import RawMessage, RawRequest, RawToolCall, RawToolDef, RawTrace
 from pilots.agentfuse.fake_client import CapturedCall, FakeChatCompletion, ScriptedClient
 
@@ -61,13 +62,13 @@ class AgentFuseShapeError(ValueError):
 
 
 def _reject_unexpected_keys(obj: dict[str, Any], supported: frozenset[str], path: str) -> None:
-    """Reject any key outside `supported` -- explicitly, not by silently ignoring it. Key
-    *names* are safe to report (they come from a small fixed API schema, not free-form
-    content); the corresponding *values* are never included."""
+    """Reject unknown keys without echoing them: key names are also arbitrary input."""
+    if not isinstance(obj, dict):
+        raise AgentFuseShapeError(f"{path}: expected an object")
     extra = set(obj.keys()) - supported
     if extra:
         raise AgentFuseShapeError(
-            f"{path}: unsupported field(s) {sorted(extra)!r} -- supported fields are "
+            f"{path}: unsupported field(s) -- supported fields are "
             f"{sorted(supported)!r}"
         )
 
@@ -142,7 +143,14 @@ def _convert_tool(tool: dict[str, Any], call_index: int, tool_index: int) -> Raw
     description = fn.get("description", "")
     if not isinstance(description, str):
         raise AgentFuseShapeError(f"{path}.function.description: must be a string")
-    return RawToolDef(name=name, description=description, schema_json=canonical_json(fn.get("parameters", {})))
+    parameters = fn.get("parameters", {})
+    if not isinstance(parameters, dict):
+        raise AgentFuseShapeError(f"{path}.function.parameters: expected an object")
+    try:
+        schema = canonical_json(parameters)
+    except (TypeError, ValueError, RecursionError):
+        raise AgentFuseShapeError(f"{path}.function.parameters: expected JSON data") from None
+    return RawToolDef(name=name, description=description, schema_json=schema)
 
 
 def _convert_tool_call(tc: dict[str, Any], call_index: int, msg_index: int, tc_index: int) -> RawToolCall:
@@ -188,29 +196,45 @@ def _convert_message(message: dict[str, Any], call_index: int, msg_index: int) -
         # here -- AgentFuse's own adapter never produces one, but this bridge must not
         # silently str() it into something that looks like text and isn't.
         raise AgentFuseShapeError(f"{path}.content: must be a string or null (got type {type(content).__name__})")
-    raw_tool_calls = message.get("tool_calls") or []
+    raw_tool_calls = message.get("tool_calls", [])
+    if not isinstance(raw_tool_calls, list):
+        raise AgentFuseShapeError(f"{path}.tool_calls: expected an array")
+    if raw_tool_calls and role != "assistant":
+        raise AgentFuseShapeError(f"{path}.tool_calls: only supported on assistant messages")
+    tool_call_id = message.get("tool_call_id")
+    if tool_call_id is not None and (not isinstance(tool_call_id, str) or not tool_call_id):
+        raise AgentFuseShapeError(f"{path}.tool_call_id: expected a non-empty string")
+    if role == "tool" and tool_call_id is None:
+        raise AgentFuseShapeError(f"{path}.tool_call_id: required on tool results")
+    if role != "tool" and tool_call_id is not None:
+        raise AgentFuseShapeError(f"{path}.tool_call_id: only supported on tool results")
     tool_calls = tuple(
         _convert_tool_call(tc, call_index, msg_index, i) for i, tc in enumerate(raw_tool_calls)
     )
-    return RawMessage(role=role, content=content, tool_call_id=message.get("tool_call_id"), tool_calls=tool_calls)
+    return RawMessage(role=role, content=content, tool_call_id=tool_call_id, tool_calls=tool_calls)
 
 
 def _convert_call(call: CapturedCall, workload_id: str, index: int) -> RawRequest:
     path = f"call {index}"
-    if call.extra_kwargs:
-        # Top-level kwargs this bridge has no mapping for (tool_choice, temperature, ...).
-        # Reported by key name only -- these are call-shape parameters, not message
-        # content, so the key names themselves carry no customer data.
-        raise AgentFuseShapeError(
-            f"{path}: unsupported top-level field(s) {sorted(call.extra_kwargs.keys())!r} -- "
-            f"this bridge has no mapping for them yet"
-        )
+    _reject_unexpected_keys(call.extra_kwargs, frozenset({"tool_choice"}), path)
+    try:
+        tool_choice = (parse_tool_choice(call.extra_kwargs["tool_choice"])
+                       if "tool_choice" in call.extra_kwargs else None)
+    except ValueError:
+        raise AgentFuseShapeError(f"{path}.tool_choice: unsupported shape") from None
+    if not isinstance(call.model, str) or not call.model:
+        raise AgentFuseShapeError(f"{path}.model: expected a non-empty string")
+    if not isinstance(call.messages, list):
+        raise AgentFuseShapeError(f"{path}.messages: expected an array")
+    if not isinstance(call.tools, list):
+        raise AgentFuseShapeError(f"{path}.tools: expected an array")
     if not call.messages:
         raise AgentFuseShapeError(f"{path}.messages[0]: expected a system message, found no messages")
+    _reject_unexpected_keys(call.messages[0], frozenset({"role", "content"}), f"{path}.messages[0]")
     if call.messages[0].get("role") != "system":
         raise AgentFuseShapeError(f"{path}.messages[0].role: expected 'system'")
-    _reject_unexpected_keys(call.messages[0], _SUPPORTED_MESSAGE_KEYS, f"{path}.messages[0]")
     for later_index, message in enumerate(call.messages[1:], start=1):
+        _reject_unexpected_keys(message, _SUPPORTED_MESSAGE_KEYS, f"{path}.messages[{later_index}]")
         if message.get("role") == "system":
             raise AgentFuseShapeError(
                 f"{path}.messages[{later_index}]: a second system message is not supported "
@@ -236,6 +260,7 @@ def _convert_call(call: CapturedCall, workload_id: str, index: int) -> RawReques
         usage_input_tokens=usage.prompt_tokens if usage is not None else None,
         usage_output_tokens=usage.completion_tokens if usage is not None else None,
         usage_cache_read_tokens=None,
+        tool_choice=tool_choice,
     )
 
 
@@ -249,7 +274,8 @@ def convert_captured_calls(captured: list[CapturedCall], workload_id: str) -> Ra
 
 class InMemoryTraceSource(Node):
     """A SOURCE node wrapping a RawTrace already built in memory -- no file, no network.
-    Config: `trace` (RawTrace). Content-bearing, same as JsonlSource.
+    Construction argument: `trace` (RawTrace), held outside mutable node config.
+    Content-bearing, same as JsonlSource. Create a new source for a different trace.
 
     `config_key()` is a random UUID generated once at construction, not `id(self)`. An
     earlier version used `id(self)` as cache identity; an independent review demonstrated
@@ -267,17 +293,18 @@ class InMemoryTraceSource(Node):
     """
 
     kind = NodeKind.SOURCE
-    version = "2"  # bumped: cache identity fixed from id(self) to a random per-instance nonce
+    version = "3"  # nonce bound to construction-time trace outside mutable config
     inputs: ClassVar[dict[str, type]] = {}
     output = RawTrace
     content_bearing = True
 
-    def __init__(self, node_id: str, **config: Any) -> None:
-        super().__init__(node_id, **config)
+    def __init__(self, node_id: str, *, trace: RawTrace) -> None:
+        super().__init__(node_id)
+        self._trace = trace
         self._nonce = uuid.uuid4().hex
 
     async def execute(self, ctx: RunContext, **_: object) -> RawTrace:
-        trace: RawTrace = self.config["trace"]
+        trace = self._trace
         ctx.log("in-memory trace with %d requests, no file or network involved", len(trace.requests))
         return trace
 

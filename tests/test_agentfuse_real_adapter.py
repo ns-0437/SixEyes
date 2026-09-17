@@ -35,6 +35,8 @@ try:
 
     _AGENTFUSE_AVAILABLE = True
 except ImportError:
+    if _AGENTFUSE_PATH:
+        raise  # Explicitly requested integration must fail, not silently skip.
     _AGENTFUSE_AVAILABLE = False
 
 pytestmark = pytest.mark.skipif(
@@ -46,7 +48,9 @@ pytestmark = pytest.mark.skipif(
     ),
 )
 
-from pilots.agentfuse.bridge import AgentFuseShapeError, convert_captured_calls
+from pilots.agentfuse.bridge import convert_captured_calls
+from pilots.agentfuse.report import analyze_captured_calls
+from sixeyes.fingerprint.types import DivergenceKind
 from pilots.agentfuse.fake_client import (
     FakeChatCompletion,
     FakeChoice,
@@ -112,12 +116,8 @@ def test_real_adapter_without_tools_converts_cleanly() -> None:
     assert request.messages[0].content == "say hi"
 
 
-def test_real_adapter_with_tools_makes_a_real_tool_call_and_is_explicitly_rejected() -> None:
-    """With tools present, the real adapter always sends `tool_choice`
-    (openai_sdk.py:68) -- a field RawRequest has no slot for and that this bridge
-    therefore cannot silently ignore. The correct behaviour is an explicit, clear
-    rejection, not a silent drop or a corrupted conversion -- proven here against
-    genuine kwargs the real function actually produced, not a copy of its shape."""
+async def test_real_adapter_with_tools_converts_and_runs_the_full_pipeline() -> None:
+    """A genuine tool-use loop now preserves tool_choice all the way to comparison."""
     client = ScriptedClient(
         [_tool_call_response("call_1", "search_files", '{"pattern":"*.conn"}'), _text_response("found nothing")]
     )
@@ -133,8 +133,11 @@ def test_real_adapter_with_tools_makes_a_real_tool_call_and_is_explicitly_reject
     # argument string preserved exactly as the fake model "emitted" it
     assert client.captured[1].messages[-2]["tool_calls"][0]["function"]["arguments"] == '{"pattern":"*.conn"}'
 
-    with pytest.raises(AgentFuseShapeError, match="tool_choice"):
-        convert_captured_calls(client.captured, workload_id="wl_real_adapter")
+    trace = convert_captured_calls(client.captured, workload_id="wl_real_adapter")
+    assert all(r.tool_choice is not None and r.tool_choice.mode == "auto" for r in trace.requests)
+    report = await analyze_captured_calls(client.captured)
+    assert report.request_count == 2
+    assert report.comparisons[0].kind is DivergenceKind.NONE
 
 
 def test_real_adapters_rerun_restart_actually_truncates_the_captured_history() -> None:

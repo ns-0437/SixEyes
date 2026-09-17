@@ -1,0 +1,30 @@
+name: Tests
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  offline-pilot:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install test and pinned pilot dependencies
+        run: python -m pip install -r requirements-pilot.txt
+      - name: Require actual adapter availability
+        run: python -c "from agentfuse.adapters.openai_sdk import guarded_tool_loop"
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Strict type check
+        run: python -m mypy
+      - name: Exercise the offline entry point
+        run: python -m pilots.agentfuse --scenario restart --format json

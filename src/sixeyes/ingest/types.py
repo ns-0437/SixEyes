@@ -18,6 +18,30 @@ Role = Literal["system", "user", "assistant", "tool"]
 
 
 @dataclass(frozen=True, slots=True)
+class RawToolChoice:
+    """Explicit tool-selection control; None on RawRequest means field omitted.
+
+    Function names are content-bearing. This is a request control, not a claimed
+    position in a provider's cached prompt prefix.
+    """
+
+    mode: Literal["auto", "none", "required", "function"]
+    function_name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("auto", "none", "required", "function"):
+            raise ValueError("tool_choice: unsupported mode")
+        if self.mode == "function":
+            if not isinstance(self.function_name, str) or not self.function_name:
+                raise ValueError("tool_choice.function.name: expected a non-empty string")
+        elif self.function_name is not None:
+            raise ValueError("tool_choice: function name requires function mode")
+
+    def content_key(self) -> Any:
+        _refuse("RawToolChoice")
+
+
+@dataclass(frozen=True, slots=True)
 class RawToolDef:
     """A tool/function definition as sent to the model."""
 
@@ -104,6 +128,7 @@ class RawRequest:
     usage_input_tokens: int | None = None
     usage_output_tokens: int | None = None
     usage_cache_read_tokens: int | None = None
+    tool_choice: RawToolChoice | None = None
 
     def content_key(self) -> Any:
         _refuse("RawRequest")

@@ -5,10 +5,17 @@ product failure, not a style disagreement.
 
 ## What this is
 
-SixEyes is a **read-only forensic analyzer for agentic LLM waste**. It ingests execution
-traces, diagnoses recoverable spend, localises the exact cause, and prescribes a fix — without
-modifying production requests. Opening capability: prompt-cache hit-rate engineering. It is
-not a gateway, not a proxy, not a router.
+SixEyes is building a **read-only forensic analyzer for agentic LLM waste**. Today it
+imports request traces, fingerprints supported structure, and compares consecutive
+requests. Recoverable-spend attribution and verified remediation are goals, not shipped
+capabilities. Opening experiment: prompt-cache diagnostics that help an owner identify
+and evaluate a useful fix without modifying production requests.
+
+**Current milestone (2026-09-17):** runnable offline AgentFuse pilot, using the actual
+pinned adapter with a fake client. Run `python -m pilots.agentfuse --scenario restart`
+after the setup in `docs/PILOT.md`. It emits a structural report, not a cost finding.
+The next evidence needed is an explicitly authorized workload and an owner-assessed
+actionable observation. Phase 3 detectors and the 5-workload kill gate remain unfinished.
 
 **Competitive reality, checked 2026-09-16:** Anthropic ships a native `cache-diagnosis` beta
 API that fingerprints consecutive requests and reports the exact divergence point
@@ -255,3 +262,38 @@ See `ARCHITECTURE.md` for the node graph and `docs/PHASES.md` for the build plan
 - Dependencies are a liability. Justify every addition in the PR description.
 - `pytest` must pass before any phase is called done. No exceptions, no "will fix next phase".
 - Phases ship in order. Do not start phase N+1 while phase N has failing tests.
+
+## Current code map and pilot invariants
+
+- `src/sixeyes/ingest/`: raw, content-bearing types and JSONL import. `tool_choice.py`
+  parses the supported Chat Completions modes and named-function shape without coercion.
+- `src/sixeyes/fingerprint/`: HMAC fingerprints and structural comparison. Version 7
+  fingerprints explicit tool choice separately from ordered prefix segments; Divergence
+  version 4 reports `tool_choice_changed`. Check order is model, tool choice, then
+  tools/system/messages. No provider cache effect or token offset is inferred for a
+  tool-choice change. Omitted choice remains distinct from an explicit default.
+- `src/sixeyes/graph/`: typed execution, cache boundaries, run-scoped preparation and
+  rejection of overlapping shared nodes. Do not bypass it in a pilot.
+- `pilots/agentfuse/bridge.py`: strict captured-call conversion and a source bound to
+  its construction-time trace. Each source gets a random nonce; never use `id()` for
+  persistent cache identity. Construct a new source for a different trace.
+- `pilots/agentfuse/demo.py` / `__main__.py`: synthetic scenarios run by the actual
+  AgentFuse adapter. `run_scripted_loop` remains a unit-test fixture, not the demo driver.
+- `pilots/agentfuse/report.py`: ephemeral-key, NullCache graph execution and selected
+  report fields (counts, request ordinals, fixed change kinds, offsets, static next checks).
+  Do not dump raw traces, arbitrary workload labels, model names or whole manifests.
+- `requirements-pilot.txt`: pinned, optional development integration. No AgentFuse
+  dependency in the SixEyes runtime package. CI installs it and requires the actual
+  adapter to import before running tests; explicit bad checkout paths must fail.
+- Unknown **key names and values** can both contain sensitive input. Rejection messages
+  may name only fixed schema fields/expected shapes and numeric positions.
+- `tool_choice` is now supported. `strict`, message `name`, multimodal content, custom
+  tools and other unsupported request options still fail explicitly in this bridge.
+- This pilot stores raw objects transiently in process memory; caller-owned captures
+  remain alive until released. No claim of secure memory erasure or OS sandboxing.
+- The synthetic entry point takes no credentials, live client or production trace.
+  Paid execution still needs an explicit task/data scope, model, call limit and spending
+  controls. A cost estimate alone is not an enforced spend cap.
+
+Keep this map and `docs/PHASES.md` current in each capability-changing commit. Prioritize
+the smallest owner-usable experiment over more adapters, infrastructure or review counts.

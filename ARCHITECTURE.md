@@ -149,6 +149,9 @@ sixeyes/
 ├── docs/
 │   └── PHASES.md              # build plan, one phase at a time
 ├── pyproject.toml
+├── requirements-pilot.txt     # pinned optional development integration
+├── pilots/agentfuse/          # strict memory-only bridge, actual-adapter synthetic demo,
+│                             # selected structural report (not Phase 6 economics)
 ├── src/sixeyes/
 │   ├── core/
 │   │   ├── units.py           # Money (integer micro-USD), TokenCount
@@ -168,7 +171,8 @@ sixeyes/
 │   │   └── trace.py           # per-node timing, cache hit/miss, run manifest
 │   ├── ingest/                # Phase 2 (JSONL ingest shipped; OTel/SDK adapters pending)
 │   │   ├── types.py           # content-bearing domain model: RawTrace, RawRequest, ...
-│   │   └── jsonl.py           # zero-instrumentation import path + JsonlSource node
+│   │   ├── jsonl.py           # zero-instrumentation import path + JsonlSource node
+│   │   └── tool_choice.py     # shared strict parser for the supported request control
 │   ├── fingerprint/           # Phase 2 (shipped)
 │   │   ├── types.py           # content-free: RequestFingerprint, DivergenceReport
 │   │   ├── tokenize.py        # word-boundary tokenizer (real BPE tokenizer: near-term)
@@ -183,6 +187,12 @@ sixeyes/
 ```
 
 ## Execution model
+
+The offline pilot follows `InMemoryTraceSource → Fingerprint → Divergence` with
+NullCache and an ephemeral key. A small renderer selects report fields after execution;
+it does not serialize raw objects or the entire run manifest. Source identity is a
+random nonce bound to one construction-time trace. Tool-choice identity is HMAC-keyed
+independently of prefix segments; a control change carries no estimated prefix loss.
 
 1. **Build** — nodes registered, ports type-checked, cycles rejected. Fails fast, before I/O.
 2. **Plan** — topological levels computed; cache keys derived for every node.

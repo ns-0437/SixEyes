@@ -89,6 +89,16 @@ def compare(workload_id: str, previous: RequestFingerprint, current: RequestFing
             cache_missed_units=current.total_units,
         )
 
+    if previous.tool_choice_digest != current.tool_choice_digest:
+        # Request control, not an ordered prefix segment. No provider-token position
+        # or affected-unit estimate can be inferred for this change.
+        return DivergenceReport(
+            workload_id=workload_id,
+            previous_request_ref=previous.request_ref,
+            request_ref=current.request_ref,
+            kind=DivergenceKind.TOOL_CHOICE_CHANGED,
+        )
+
     remaining_units = current.total_units
     for kind in SEGMENT_ORDER:
         prev_seg = previous.segment(kind)
@@ -122,7 +132,7 @@ class Divergence(Node):
     report, matching a first API turn having no previous_message_id to diagnose against."""
 
     kind = NodeKind.PURE
-    version = "3"
+    version = "4"
     inputs: ClassVar[dict[str, type]] = {"fingerprints": tuple}
     output = tuple
     content_bearing = False

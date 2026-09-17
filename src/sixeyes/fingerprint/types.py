@@ -104,10 +104,13 @@ class RequestFingerprint:
     a model change invalidates cache compatibility entirely, independent of prefix order."""
     segments: tuple[SegmentFingerprint, ...]
     """Exactly one entry per kind in SEGMENT_ORDER, in that order."""
+    tool_choice_digest: Digest | None = None
+    """Keyed digest of an explicit tool choice; None means omitted. Separate from
+    ordered prefix segments: its provider cache effects are not inferred here."""
 
     def content_key(self) -> Any:
         return [self.request_ref, self.key_ref, self.timestamp, self.model_digest,
-                list(self.segments)]
+                list(self.segments), self.tool_choice_digest]
 
     def segment(self, kind: SegmentKind) -> SegmentFingerprint:
         for seg in self.segments:
@@ -121,13 +124,15 @@ class RequestFingerprint:
 
 
 class DivergenceKind(str, Enum):
-    """Named the same way as Anthropic's own `cache_miss_reason.type` (verified against
-    their live cache-diagnosis docs, 2026-09-16) so a report reads the same regardless of
-    whether the underlying detection came from a provider's native API or from a trace
-    export analyzed after the fact."""
+    """Structural comparison categories, not observed provider cache-miss reasons.
+
+    Model/segment names follow the original Anthropic-inspired vocabulary.
+    TOOL_CHOICE_CHANGED is SixEyes's separate request-control observation.
+    """
 
     NONE = "none"
     MODEL_CHANGED = "model_changed"
+    TOOL_CHOICE_CHANGED = "tool_choice_changed"
     SYSTEM_CHANGED = "system_changed"
     TOOLS_CHANGED = "tools_changed"
     MESSAGES_CHANGED = "messages_changed"
@@ -148,7 +153,7 @@ def divergence_kind_for_segment(segment_kind: SegmentKind) -> DivergenceKind:
 class DivergenceReport:
     """The result of comparing two consecutive requests' fingerprints.
 
-    `kind is DivergenceKind.NONE` means every segment's chain is either identical or a
+    `kind is DivergenceKind.NONE` means model and tool choice match, and every segment's chain is either identical or a
     genuine append-only extension of the previous one. Anything else means some segment
     changed in a way this analyzer cannot prove is safe -- including a truncation with a
     matching shared prefix: the evidence available here cannot establish that a shortened
@@ -169,7 +174,8 @@ class DivergenceReport:
     request_ref: Digest
     kind: DivergenceKind
     segment_offset: int = 0
-    """Unit offset within the diverging segment (0 when kind is NONE or MODEL_CHANGED)."""
+    """Unit offset within a diverging segment. Zero is a sentinel for NONE,
+    MODEL_CHANGED and TOOL_CHOICE_CHANGED; the pilot renderer exports null instead."""
     cache_missed_units: int = 0
     """Units in the *new* request, from the divergence point onward, across the
     diverging segment and everything after it in SEGMENT_ORDER -- an estimate of how much

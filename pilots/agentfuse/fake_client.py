@@ -128,9 +128,9 @@ class ScriptedClient:
         extra = {k: v for k, v in kwargs.items() if k not in ("model", "messages", "tools")}
         self.captured.append(
             CapturedCall(
-                model=str(kwargs.get("model", "")),
+                model=copy.deepcopy(kwargs.get("model", "")),
                 messages=copy.deepcopy(kwargs.get("messages", [])),
-                tools=copy.deepcopy(kwargs.get("tools", []) or []),
+                tools=copy.deepcopy(kwargs.get("tools", [])),
                 extra_kwargs=copy.deepcopy(extra),
                 response=response,
                 captured_at=time.time(),

@@ -162,6 +162,15 @@ def fingerprint_request(request: RawRequest, key: bytes) -> RequestFingerprint:
         timestamp=request.timestamp,
         model_digest=content_hash("model", request.model),
         segments=tuple(segments),
+        tool_choice_digest=(
+            Digest(hmac.new(
+                key,
+                b"sixeyes.fingerprint.tool_choice.v1:" + canonical_bytes(
+                    (request.tool_choice.mode, request.tool_choice.function_name)
+                ),
+                _HMAC_DIGEST,
+            ).hexdigest()) if request.tool_choice is not None else None
+        ),
     )
 
 
@@ -186,7 +195,7 @@ class Fingerprint(Node):
     """
 
     kind = NodeKind.PURE
-    version = "6"  # bumped: message_units now also fingerprints tool_calls
+    version = "7"  # explicit tool-choice digest added; invalidate earlier cached outputs
     inputs: ClassVar[dict[str, type]] = {"trace": RawTrace}
     output = tuple
     content_bearing = False

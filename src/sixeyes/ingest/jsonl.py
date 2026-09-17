@@ -12,6 +12,7 @@ Documented line schema (fields beyond these are ignored, not rejected):
       "request_id": "req_1",
       "timestamp": 1758000000.0,
       "model": "claude-opus-5",
+      "tool_choice": "auto",
       "system": "You are a helpful assistant.",
       "tools": [{"name": "search", "description": "...", "schema": {...}}],
       "messages": [
@@ -50,6 +51,7 @@ from sixeyes.graph.context import RunContext
 from sixeyes.graph.node import Node, NodeKind
 from sixeyes.graph.run_scoped import RunScoped
 from sixeyes.ingest.types import RawMessage, RawRequest, RawToolCall, RawToolDef, RawTrace
+from sixeyes.ingest.tool_choice import parse_tool_choice
 
 
 class JsonlFormatError(ValueError):
@@ -143,6 +145,10 @@ def parse_line(line: str, line_no: int) -> RawRequest:
         raise JsonlFormatError(line_no, "each line must be a JSON object")
 
     usage = obj.get("usage", {}) or {}
+    try:
+        tool_choice = parse_tool_choice(obj["tool_choice"]) if "tool_choice" in obj else None
+    except ValueError:
+        raise JsonlFormatError(line_no, "unsupported tool_choice shape") from None
     return RawRequest(
         request_id=str(_require(obj, "request_id", line_no)),
         timestamp=_require_float(obj, "timestamp", line_no),
@@ -153,6 +159,7 @@ def parse_line(line: str, line_no: int) -> RawRequest:
         usage_input_tokens=usage.get("input_tokens"),
         usage_output_tokens=usage.get("output_tokens"),
         usage_cache_read_tokens=usage.get("cache_read_input_tokens"),
+        tool_choice=tool_choice,
     )
 
 
@@ -186,7 +193,7 @@ class JsonlSource(Node):
     """
 
     kind = NodeKind.SOURCE
-    version = "3"
+    version = "4"  # preserve the optional tool_choice control
     inputs: ClassVar[dict[str, type]] = {}
     output = RawTrace
     content_bearing = True

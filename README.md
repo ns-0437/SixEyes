@@ -1,8 +1,8 @@
 # SixEyes
 
 An experimental, read-only analyzer that imports JSONL LLM execution traces and reports
-**structural changes** between consecutive requests — the specific field and position
-where one request diverged from the one before it. It never modifies a production
+**structural changes** between consecutive requests — the first differing segment and
+a unit offset, or a changed model/tool-selection control. It never modifies a production
 request. Cost attribution, additional waste detectors, and broader provider integrations
 are planned, not built; customer savings have not yet been validated. See
 [What this is, precisely](#what-this-is-precisely) below for exactly what that does and
@@ -92,7 +92,7 @@ output tainted unconditionally — the executor forces this regardless of whethe
 tries to skip it — so an LLM can never back a "certified" finding. Content-bearing status
 (does this node's output hold raw prompt text?) propagates downstream by default and can
 only be cleared by a node that explicitly, auditably declares `declassifies = True`. See
-`ARCHITECTURE.md` for the full node-kind table and `CLAUDE.md` for the 13 working rules
+`ARCHITECTURE.md` for the full node-kind table and `CLAUDE.md` for the 12 working rules
 this is built against.
 
 ## Review history
@@ -118,9 +118,12 @@ checked so far, not complete.
 
 ```
 sixeyes/
-├── CLAUDE.md              # 13 working rules — read this first if you're touching code
+├── CLAUDE.md              # 12 working rules and current code map — read first
 ├── ARCHITECTURE.md        # node-kind semantics, the graph engine, why it exists
 ├── docs/PHASES.md         # the 6-phase build plan and full review history
+├── docs/PILOT.md          # runnable offline pilot and live-workload prerequisites
+├── pilots/agentfuse/      # actual-adapter synthetic demo and structural report
+├── requirements-pilot.txt # pinned development-only AgentFuse integration
 ├── src/sixeyes/
 │   ├── core/              # Money (int micro-USD), content hashing, Finding/Evidence types
 │   ├── graph/             # the typed DAG engine: Node, Graph, Executor, RunScoped,
@@ -129,8 +132,7 @@ sixeyes/
 │   ├── ingest/            # trace importers — JSONL (zero-instrumentation) shipped;
 │   │                      #   OTel GenAI / native SDK adapters not yet
 │   └── fingerprint/       # the content-free fingerprinting + divergence mechanism
-└── tests/                 # 140 tests, including permanent regressions for every
-                           #   finding from all five review rounds
+└── tests/                 # invariant, regression and offline integration tests
 ```
 
 ## Running it
@@ -145,6 +147,23 @@ mypy
 
 No external dependencies at runtime — deliberately. See `CLAUDE.md` rule 9.
 
+## Try the offline pilot
+
+From the repository root in your virtual environment:
+
+```bash
+python -m pip install -r requirements-pilot.txt
+python -m pilots.agentfuse --scenario stable
+python -m pilots.agentfuse --scenario system-drift
+python -m pilots.agentfuse --scenario restart --format json
+```
+
+The actual pinned AgentFuse adapter runs against a fake client and synthetic tools.
+The report shows stable growth, injected system drift, or a history restart. Raw captures
+stay in memory; only selected structural report fields are printed. No paid API calls or
+credentials are involved. These examples establish offline behavior, not customer savings.
+See [the pilot guide](docs/PILOT.md) for the supported subset, checks and next experiment.
+
 ## Running this against a real workload
 
 The kill gate in `docs/PHASES.md` (5 real workloads, ≥25% recoverable cost) is the
@@ -154,7 +173,7 @@ pilot can happen. This section defines what "authorized" means for that pilot; i
 an invitation to run this against arbitrary customer data without one.
 
 The current pipeline makes no network requests and has no way to reach a provider account
-or live production traffic — it only ever reads a JSONL file someone hands it. That's a
+or live production traffic — it reads JSONL exports or in-memory pilot captures. That's a
 property of what this code does, not a sandboxing guarantee: nothing here isolates the
 Python process from the network the way a container or a firewall rule would. It narrows
 the risk but does not remove the judgment call. A run against real data is authorized only
