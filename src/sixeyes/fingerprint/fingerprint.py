@@ -115,7 +115,7 @@ def _message_units(request: RawRequest) -> tuple[Any, ...]:
         # would fingerprint identically to one with no tool calls at all -- a real change
         # silently invisible to the comparison.
         units.extend(
-            ("tool_call", call.id, call.name, call.arguments_json)
+            ("tool_call", call.id, call.name, call.arguments_raw)
             for call in message.tool_calls
         )
         # An explicit end marker, not just an implicit "next message_start or end of

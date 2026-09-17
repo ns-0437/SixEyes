@@ -188,6 +188,41 @@ ingest/fingerprinting mechanism against real agentic-loop-shaped data and checks
 the agent's own context stays cache-stable turn to turn -- it does not, and cannot yet,
 surface a redundant-tool-call finding.
 
+**Argument-string correction (2026-09-17, same-day follow-up).** Reading AgentFuse's real
+adapter (`agentfuse/adapters/openai_sdk.py`) before building the pilot's capture shim
+found the `RawToolCall` fix above still had one wrong assumption baked in: it treated a
+tool call's `arguments` as a JSON *object* and ran it through `canonical_json` on ingest,
+the same treatment given to a tool's static schema. Real tool-call arguments are model
+output carried as a raw *string* (OpenAI's SDK types `tool_calls[].function.arguments` as
+`str`, not a parsed object), not guaranteed to even be valid JSON -- AgentFuse's own code
+defensively handles a model emitting a broken escape sequence. Canonicalizing this field
+would silently reformat what the model actually said, and would crash outright on
+malformed-but-real input. Fixed: the field is now `arguments_raw`, stored verbatim, never
+parsed or re-serialized; the JSONL schema requires `arguments` as a string and rejects
+(does not coerce) anything else. This was caught by reading the real integration target's
+source before writing fixture data against a guessed shape, not by an external review --
+worth noting as the same discipline that produced every other fix in this log.
+
+**Two qualifications worth stating plainly, not just implying:**
+
+- `DivergenceKind.NONE` means "no structural divergence detected under SixEyes's current
+  comparison rules." It is not proof that a provider actually served a cache hit for that
+  request, and it is not proof that the calls being compared were worthwhile to make in
+  the first place -- a provider's cache entry can expire for reasons this analyzer cannot
+  observe, and two structurally-identical calls can both still be waste (see the
+  redundant-tool-call gap above). Treat `NONE` as "nothing this tool can flag," not as
+  "confirmed savings."
+- `test_concurrent_first_use_does_not_deadlock_when_run_many_times`
+  (`tests/test_fingerprint_keys.py`) failed once during earlier work in this session with a
+  `PermissionError` from `pathlib` under apparent Windows file-lock contention, then passed
+  on immediate rerun. Its traceback was not captured at the time -- a gap in its own right,
+  noted here rather than glossed over -- so it cannot be reproduced from this record. A
+  fresh attempt just now (5 consecutive runs of this test alone) did not reproduce it
+  either. This is recorded as an open, unresolved observation, not a confirmed non-issue: a
+  single unreproduced failure plus a handful of clean reruns rules out "always broken," not
+  "never happens under contention." Anyone who hits it again should capture the full
+  traceback verbatim and add it here rather than re-running past it silently.
+
 ## Phase 3 — Detectors
 
 `PrefixDivergence`, `ToolDefDrift`, `ContextResend`, `RedundantToolCall`, `RetryBurn`.

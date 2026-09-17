@@ -17,18 +17,26 @@ Documented line schema (fields beyond these are ignored, not rejected):
       "messages": [
         {"role": "user", "content": "..."},
         {"role": "assistant", "content": null, "tool_calls": [
-          {"id": "call_1", "name": "search", "arguments": {"query": "..."}}
+          {"id": "call_1", "name": "search", "arguments": "{\"query\": \"...\"}"}
         ]},
         {"role": "tool", "tool_call_id": "call_1", "content": "..."}
       ],
       "usage": {"input_tokens": 120, "output_tokens": 40, "cache_read_input_tokens": 0}
     }
 
-`tools[].schema` and a tool call's `arguments` may be any JSON-serializable object; both
-are canonicalized on import so fingerprinting is insensitive to incidental key-order
-differences between requests. A message's `content` is optional (defaults to empty, not
-the literal string "null") -- a real tool-calling assistant turn often carries no text at
-all, only `tool_calls`.
+`tools[].schema` may be any JSON-serializable object and is canonicalized on import, so
+fingerprinting is insensitive to incidental key-order differences between requests -- a
+tool definition is developer-authored and static per request, so nothing real is lost.
+
+A tool call's `arguments` is different: it must be a JSON **string**, exactly as the model
+produced it (matching the real wire shape -- OpenAI's own SDK carries
+`tool_calls[].function.arguments` as a string, not a parsed object, and that string is not
+even guaranteed to be valid JSON). It is stored verbatim, never parsed or re-serialized --
+canonicalizing it would silently reformat model output that is itself part of the message
+history. A line whose `arguments` is not a string is rejected (`JsonlFormatError`), not
+silently coerced. A message's `content` is optional (defaults to empty, not the literal
+string "null") -- a real tool-calling assistant turn often carries no text at all, only
+`tool_calls`.
 """
 
 from __future__ import annotations
@@ -84,10 +92,20 @@ def _require_float(obj: dict[str, Any], field: str, line_no: int) -> float:
 
 
 def _parse_tool_call(raw: dict[str, Any], line_no: int) -> RawToolCall:
+    arguments = raw.get("arguments", "")
+    # Explicit rejection, not silent coercion: str(arguments) on a dict would produce
+    # Python's repr-ish formatting (single-quoted keys, no real JSON guarantee), which is
+    # neither the original model output nor valid JSON -- a corruption that would be worse
+    # than just refusing the line. See arguments_raw's docstring for why this must be a
+    # string already, not an object to canonicalize.
+    if not isinstance(arguments, str):
+        raise JsonlFormatError(
+            line_no, f"tool call 'arguments' must be a JSON string (got type {type(arguments).__name__})"
+        )
     return RawToolCall(
         id=str(_require(raw, "id", line_no)),
         name=str(_require(raw, "name", line_no)),
-        arguments_json=canonical_json(raw.get("arguments", {})),
+        arguments_raw=arguments,
     )
 
 

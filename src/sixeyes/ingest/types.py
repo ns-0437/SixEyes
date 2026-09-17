@@ -43,10 +43,20 @@ class RawToolCall:
 
     id: str
     name: str
-    arguments_json: str
-    """Canonical JSON (sort_keys=True) of the call's arguments -- same treatment as
-    `RawToolDef.schema_json`, for the same reason: insensitive to incidental key-order
-    differences between otherwise-identical calls."""
+    arguments_raw: str
+    """The call's arguments exactly as the model produced them -- NOT canonicalized, and
+    deliberately not even required to be valid JSON.
+
+    This is the opposite treatment from `RawToolDef.schema_json`, and on purpose: a tool
+    definition is developer-authored and static per request, so canonicalizing it trades
+    away nothing real. A tool CALL's arguments are model output that becomes part of the
+    actual message history sent back on the next turn -- reformatting it (reordering keys,
+    changing whitespace) would silently misrepresent what the model actually said, exactly
+    the erasure an independent review (2026-09-17) flagged in an earlier version of this
+    field that ran arguments through `canonical_json`. Real adapters confirm the string can
+    even be invalid JSON outright (a model emitting a broken escape sequence, observed in
+    AgentFuse's own tool-call handling) -- a field that assumed parseable JSON would either
+    crash or silently coerce on exactly that input. Preserved verbatim instead."""
 
     def content_key(self) -> Any:
         _refuse("RawToolCall")

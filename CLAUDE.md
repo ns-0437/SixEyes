@@ -127,8 +127,14 @@ but none for a message's outgoing *request* to call a tool — a real OpenAI-sty
 assistant turn making only a tool call (`content: null`) would otherwise have to be
 either silently dropped or stringified into `content`, and either could make a request
 that actually changed compare as unchanged. Each `RawToolCall` is fingerprinted as its
-own tagged unit (`Fingerprint` version 6), same treatment as `RawToolDef`. Note precisely
-what this does *not* do: SixEyes has no redundant-tool-call detector (Phase 3, unbuilt).
+own tagged unit (`Fingerprint` version 6) — but unlike `RawToolDef.schema_json`,
+`RawToolCall.arguments_raw` is deliberately *not* canonicalized. A tool definition is
+developer-authored and static per request, so reformatting its schema loses nothing real;
+a tool call's arguments are model output carried as a raw string (confirmed against a real
+adapter, not guessed — OpenAI's SDK types `tool_calls[].function.arguments` as `str`, not
+an object, and it isn't even guaranteed to be valid JSON). Canonicalizing it would silently
+misrepresent what the model said and would crash on real malformed input. Note precisely
+what `tool_calls` does *not* do: SixEyes has no redundant-tool-call detector (Phase 3, unbuilt).
 Two identical tool calls appended as separate turns correctly report `NONE` (safe
 append growth) today — repeated calls are a lead a future detector would reason about
 (arguments, results, intervening state, retry cause), not something this comparison is

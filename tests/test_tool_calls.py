@@ -56,7 +56,7 @@ def test_a_tool_call_with_no_text_content_is_not_corrupted_into_the_string_none(
     from_parser = parse_line(
         '{"request_id":"r","timestamp":1.0,"model":"gpt-4o","system":"You are a helpful agent.",'
         '"messages":[{"role":"assistant","content":null,"tool_calls":'
-        '[{"id":"call_1","name":"search_files","arguments":{"pattern":"*.conn"}}]}]}',
+        '[{"id":"call_1","name":"search_files","arguments":"{\\"pattern\\":\\"*.conn\\"}"}]}]}',
         line_no=1,
     )
     parsed_fp = fingerprint_request(from_parser, TEST_KEY)
@@ -136,7 +136,7 @@ def test_jsonl_parser_rejects_a_tool_call_missing_its_id() -> None:
     obj = {
         "request_id": "r", "timestamp": 1.0, "model": "m",
         "messages": [{"role": "assistant", "content": None,
-                      "tool_calls": [{"name": "search_files", "arguments": {}}]}],
+                      "tool_calls": [{"name": "search_files", "arguments": "{}"}]}],
     }
     with pytest.raises(JsonlFormatError) as excinfo:
         parse_line(json.dumps(obj), line_no=5)
@@ -144,19 +144,63 @@ def test_jsonl_parser_rejects_a_tool_call_missing_its_id() -> None:
     assert "id" in str(excinfo.value)
 
 
-def test_jsonl_round_trip_preserves_tool_call_structure() -> None:
+def test_jsonl_rejects_tool_call_arguments_that_are_not_a_string() -> None:
+    """Real wire format: `arguments` is always a string (OpenAI's SDK carries it as
+    `tool_calls[].function.arguments: str`, not a parsed object). A line that supplies a
+    nested object instead is rejected outright, not silently coerced via str(dict) --
+    which would produce Python repr-ish text that is neither the model's real output nor
+    valid JSON."""
+    from sixeyes.ingest.jsonl import JsonlFormatError
+
+    import json
+    import pytest
+
+    obj = {
+        "request_id": "r", "timestamp": 1.0, "model": "m",
+        "messages": [{"role": "assistant", "content": None,
+                      "tool_calls": [{"id": "call_1", "name": "search_files", "arguments": {"a": 1}}]}],
+    }
+    with pytest.raises(JsonlFormatError) as excinfo:
+        parse_line(json.dumps(obj), line_no=5)
+    assert excinfo.value.line_no == 5
+    assert "arguments" in str(excinfo.value)
+
+
+def test_jsonl_round_trip_preserves_tool_call_argument_string_verbatim() -> None:
+    """The whole point of the fix: arguments are NOT re-parsed or re-serialized, so an
+    original key order, whitespace, or even invalid-JSON text a model actually produced
+    survives byte-for-byte. Canonicalizing this field (an earlier version of this schema
+    did) would have silently misrepresented what the model said."""
     import json
 
+    original_args = '{"b":2,"a":1,  "note":"kept exactly as written"}'
     obj = {
         "request_id": "r", "timestamp": 1.0, "model": "m",
         "messages": [{
             "role": "assistant", "content": None,
-            "tool_calls": [{"id": "call_9", "name": "search_files", "arguments": {"b": 2, "a": 1}}],
+            "tool_calls": [{"id": "call_9", "name": "search_files", "arguments": original_args}],
         }],
     }
     parsed = parse_line(json.dumps(obj), line_no=1)
     call = parsed.messages[0].tool_calls[0]
     assert call.id == "call_9"
     assert call.name == "search_files"
-    # canonicalized regardless of the original key order in "arguments"
-    assert call.arguments_json == '{"a":1,"b":2}'
+    assert call.arguments_raw == original_args
+
+
+def test_jsonl_accepts_tool_call_arguments_that_are_not_valid_json() -> None:
+    """A model can emit malformed arguments (a broken escape sequence is the common real
+    case, per AgentFuse's own defensive handling of this). Since arguments are stored
+    verbatim rather than parsed, SixEyes must accept and faithfully fingerprint this
+    rather than crash on json.loads or reject the whole line."""
+    import json
+
+    obj = {
+        "request_id": "r", "timestamp": 1.0, "model": "m",
+        "messages": [{
+            "role": "assistant", "content": None,
+            "tool_calls": [{"id": "call_1", "name": "search_files", "arguments": '{"bad": "unterminated'}],
+        }],
+    }
+    parsed = parse_line(json.dumps(obj), line_no=1)
+    assert parsed.messages[0].tool_calls[0].arguments_raw == '{"bad": "unterminated'
