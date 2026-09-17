@@ -8,12 +8,15 @@ are planned, not built; customer savings have not yet been validated. See
 [What this is, precisely](#what-this-is-precisely) below for exactly what that does and
 doesn't mean.
 
-> **Status: pre-MVP, internal.** Phase 1 (graph substrate) is done. Phase 2 (ingest +
-> content-free fingerprinting) has met its exit criterion via the JSONL path and has been
-> through four rounds of independent adversarial review — see [Why this has been reviewed
-> four times](#why-this-has-been-reviewed-four-times) below. The kill gate that actually
-> validates the business idea (5 real workloads, ≥25% recoverable cost) has not run yet.
-> Nothing here should be pointed at a real customer workload until that happens.
+> **Status: pre-MVP, internal, not yet validated on a real workload.** Phase 1 (graph
+> substrate) is done. Phase 2 (ingest + content-free fingerprinting) has met its exit
+> criterion via the JSONL path and has been through five rounds of AI-assisted code
+> review — see [Review history](#review-history) below for exactly what that does and
+> doesn't establish. The kill gate that validates the business idea (5 real workloads,
+> ≥25% recoverable cost) is *gathered through*, not a precondition for, a narrow
+> authorized pilot — see [Running this against a real
+> workload](#running-this-against-a-real-workload) for the one currently-supported way to
+> do that.
 
 ## What this is, precisely
 
