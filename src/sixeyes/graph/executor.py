@@ -19,6 +19,7 @@ from sixeyes.core.types import Finding, FindingSet
 from sixeyes.graph.cache import ArtifactCache, MemoryCache, is_miss
 from sixeyes.graph.context import RunContext
 from sixeyes.graph.graph import Graph
+from sixeyes.graph.run_isolation import claim, release
 from sixeyes.obs.trace import NodeRecord, RunManifest
 
 
@@ -113,80 +114,97 @@ class Executor:
             graph.node(node_id)  # raises GraphBuildError on unknown target
 
         needed = self._ancestors(graph, wanted)
-        keys = graph.cache_keys()
-        tainted = graph.tainted_nodes()
-        content_bearing = graph.content_bearing_nodes()
-        cache_unsafe = graph.cache_unsafe_nodes()
+        nodes_in_use = [graph.node(node_id) for node_id in needed]
 
-        root_ctx = RunContext(graph_name=graph.name, tainted_nodes=tainted)
-        manifest = RunManifest(
-            run_id=root_ctx.run_id, graph_name=graph.name, started_at=time.perf_counter()
-        )
-        result = RunResult(manifest=manifest)
-
-        # Remaining unmet dependencies per node, restricted to the needed subgraph.
-        remaining: dict[str, set[str]] = {
-            node_id: {u for u in graph.upstreams(node_id).values() if u in needed}
-            for node_id in needed
-        }
-        ready: list[str] = sorted(n for n, deps in remaining.items() if not deps)
-
-        semaphore = asyncio.Semaphore(self.max_concurrency)
-        running: dict[asyncio.Task[Any], str] = {}
-        failures: list[GraphExecutionError] = []
-
+        # Claim every node this run will touch BEFORE anything -- including
+        # graph.cache_keys() below, since that is what triggers a RunScoped node's forced
+        # refresh (JsonlSource re-reading its file, Fingerprint re-resolving its key). A
+        # fourth-round review demonstrated that two overlapping runs sharing node
+        # instances can otherwise have one run's refresh silently replace the other's
+        # still-in-use prepared state. Building real per-run isolation (each run holding
+        # its own copy of prepared state) is out of scope for now; refusing the overlap
+        # outright is the smallest correct fix, per the review's own recommendation.
+        claim(nodes_in_use)
         try:
-            while ready or running:
-                while ready and len(running) < self.max_concurrency:
-                    node_id = ready.pop(0)
-                    task = asyncio.create_task(
-                        self._run_node(
-                            graph, node_id, keys[node_id], root_ctx,
-                            result.outputs, manifest, semaphore,
-                            content_bearing, cache_unsafe,
-                        ),
-                        name=f"sixeyes:{node_id}",
-                    )
-                    running[task] = node_id
+            keys = graph.cache_keys()
+            tainted = graph.tainted_nodes()
+            content_bearing = graph.content_bearing_nodes()
+            cache_unsafe = graph.cache_unsafe_nodes()
 
-                if not running:
-                    break
+            root_ctx = RunContext(graph_name=graph.name, tainted_nodes=tainted)
+            manifest = RunManifest(
+                run_id=root_ctx.run_id, graph_name=graph.name, started_at=time.perf_counter()
+            )
+            result = RunResult(manifest=manifest)
 
-                done, _ = await asyncio.wait(
-                    running.keys(), return_when=asyncio.FIRST_COMPLETED
-                )
+            # Remaining unmet dependencies per node, restricted to the needed subgraph.
+            remaining: dict[str, set[str]] = {
+                node_id: {u for u in graph.upstreams(node_id).values() if u in needed}
+                for node_id in needed
+            }
+            ready: list[str] = sorted(n for n, deps in remaining.items() if not deps)
 
-                for task in done:
-                    node_id = running.pop(task)
-                    error = task.exception()
-                    if error is not None:
-                        wrapped = (
-                            error
-                            if isinstance(error, GraphExecutionError)
-                            else GraphExecutionError(node_id, error)
+            semaphore = asyncio.Semaphore(self.max_concurrency)
+            running: dict[asyncio.Task[Any], str] = {}
+            failures: list[GraphExecutionError] = []
+
+            try:
+                while ready or running:
+                    while ready and len(running) < self.max_concurrency:
+                        node_id = ready.pop(0)
+                        task = asyncio.create_task(
+                            self._run_node(
+                                graph, node_id, keys[node_id], root_ctx,
+                                result.outputs, manifest, semaphore,
+                                content_bearing, cache_unsafe,
+                            ),
+                            name=f"sixeyes:{node_id}",
                         )
-                        failures.append(wrapped)
-                        if self.fail_fast:
-                            raise wrapped
-                        continue
+                        running[task] = node_id
 
-                    result.outputs[node_id] = task.result()
-                    for downstream in graph.dependents(node_id):
-                        if downstream in remaining:
-                            remaining[downstream].discard(node_id)
-                            if not remaining[downstream]:
-                                ready.append(downstream)
-                    ready.sort()
+                    if not running:
+                        break
+
+                    done, _ = await asyncio.wait(
+                        running.keys(), return_when=asyncio.FIRST_COMPLETED
+                    )
+
+                    for task in done:
+                        node_id = running.pop(task)
+                        error = task.exception()
+                        if error is not None:
+                            wrapped = (
+                                error
+                                if isinstance(error, GraphExecutionError)
+                                else GraphExecutionError(node_id, error)
+                            )
+                            failures.append(wrapped)
+                            if self.fail_fast:
+                                raise wrapped
+                            continue
+
+                        result.outputs[node_id] = task.result()
+                        for downstream in graph.dependents(node_id):
+                            if downstream in remaining:
+                                remaining[downstream].discard(node_id)
+                                if not remaining[downstream]:
+                                    ready.append(downstream)
+                        ready.sort()
+            finally:
+                for task in running:
+                    task.cancel()
+                if running:
+                    await asyncio.gather(*running, return_exceptions=True)
+                manifest.finished_at = time.perf_counter()
+
+            if failures and not self.fail_fast:
+                raise failures[0]
+            return result
         finally:
-            for task in running:
-                task.cancel()
-            if running:
-                await asyncio.gather(*running, return_exceptions=True)
-            manifest.finished_at = time.perf_counter()
-
-        if failures and not self.fail_fast:
-            raise failures[0]
-        return result
+            # Always released -- normal return, an exception propagating out (including
+            # fail_fast's raised failures[0]), or this coroutine being cancelled while
+            # awaiting somewhere inside this block all run this finally.
+            release(nodes_in_use)
 
     # ------------------------------------------------------------------ internals
 
