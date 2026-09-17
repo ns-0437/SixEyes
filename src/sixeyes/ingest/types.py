@@ -35,12 +35,39 @@ class RawToolDef:
 
 
 @dataclass(frozen=True, slots=True)
+class RawToolCall:
+    """One structured tool-call *request* made by a message -- e.g. OpenAI's
+    `message.tool_calls[]`. Distinct from `RawToolDef` (a tool's definition/schema,
+    sent once per request) and from a `role="tool"` `RawMessage` (that call's result,
+    sent back on a later turn)."""
+
+    id: str
+    name: str
+    arguments_json: str
+    """Canonical JSON (sort_keys=True) of the call's arguments -- same treatment as
+    `RawToolDef.schema_json`, for the same reason: insensitive to incidental key-order
+    differences between otherwise-identical calls."""
+
+    def content_key(self) -> Any:
+        _refuse("RawToolCall")
+
+
+@dataclass(frozen=True, slots=True)
 class RawMessage:
-    """One turn in the conversation."""
+    """One turn in the conversation.
+
+    `tool_calls` holds structured tool-call requests this message makes (assistant role,
+    typically). An earlier version of this schema had no slot for these -- discovered
+    when checking whether a real OpenAI-style tool-use loop could be ingested faithfully:
+    without this field, a genuine change in which tool was called, or with what
+    arguments, would have to be either silently dropped or stringified into `content`,
+    and either could make a request that actually changed compare as unchanged.
+    """
 
     role: Role
     content: str
     tool_call_id: str | None = None
+    tool_calls: tuple[RawToolCall, ...] = ()
 
     def content_key(self) -> Any:
         _refuse("RawMessage")

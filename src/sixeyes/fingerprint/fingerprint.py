@@ -107,6 +107,17 @@ def _message_units(request: RawRequest) -> tuple[Any, ...]:
         # change, not silently ignored.
         units.append(("message_start", message.role, message.tool_call_id))
         units.extend(("text", unit) for unit in tokenize(message.content))
+        # A message's outgoing tool-call requests (an assistant deciding to call a tool,
+        # not that tool's result -- see RawToolCall) are their own tagged, structured
+        # units, same treatment as tool definitions above. Onboarding a real OpenAI-style
+        # tool-use loop surfaced why this can't be skipped: without it, a message with no
+        # text content that only changes *which tool is called or with what arguments*
+        # would fingerprint identically to one with no tool calls at all -- a real change
+        # silently invisible to the comparison.
+        units.extend(
+            ("tool_call", call.id, call.name, call.arguments_json)
+            for call in message.tool_calls
+        )
         # An explicit end marker, not just an implicit "next message_start or end of
         # stream" boundary. Without one, the last message's content chain has no
         # terminator -- editing it (e.g. "hello" -> "hello extra instructions") inserts
@@ -175,7 +186,7 @@ class Fingerprint(Node):
     """
 
     kind = NodeKind.PURE
-    version = "5"  # bumped: message_units now emits an explicit end marker per message
+    version = "6"  # bumped: message_units now also fingerprints tool_calls
     inputs: ClassVar[dict[str, type]] = {"trace": RawTrace}
     output = tuple
     content_bearing = False

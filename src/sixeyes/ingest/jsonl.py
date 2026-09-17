@@ -14,12 +14,21 @@ Documented line schema (fields beyond these are ignored, not rejected):
       "model": "claude-opus-5",
       "system": "You are a helpful assistant.",
       "tools": [{"name": "search", "description": "...", "schema": {...}}],
-      "messages": [{"role": "user", "content": "..."}],
+      "messages": [
+        {"role": "user", "content": "..."},
+        {"role": "assistant", "content": null, "tool_calls": [
+          {"id": "call_1", "name": "search", "arguments": {"query": "..."}}
+        ]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "..."}
+      ],
       "usage": {"input_tokens": 120, "output_tokens": 40, "cache_read_input_tokens": 0}
     }
 
-`tools[].schema` may be any JSON-serializable object; it is canonicalized on import so
-fingerprinting is insensitive to incidental key-order differences between requests.
+`tools[].schema` and a tool call's `arguments` may be any JSON-serializable object; both
+are canonicalized on import so fingerprinting is insensitive to incidental key-order
+differences between requests. A message's `content` is optional (defaults to empty, not
+the literal string "null") -- a real tool-calling assistant turn often carries no text at
+all, only `tool_calls`.
 """
 
 from __future__ import annotations
@@ -32,7 +41,7 @@ from sixeyes.core.ids import hash_bytes
 from sixeyes.graph.context import RunContext
 from sixeyes.graph.node import Node, NodeKind
 from sixeyes.graph.run_scoped import RunScoped
-from sixeyes.ingest.types import RawMessage, RawRequest, RawToolDef, RawTrace
+from sixeyes.ingest.types import RawMessage, RawRequest, RawToolCall, RawToolDef, RawTrace
 
 
 class JsonlFormatError(ValueError):
@@ -74,14 +83,28 @@ def _require_float(obj: dict[str, Any], field: str, line_no: int) -> float:
         ) from None
 
 
+def _parse_tool_call(raw: dict[str, Any], line_no: int) -> RawToolCall:
+    return RawToolCall(
+        id=str(_require(raw, "id", line_no)),
+        name=str(_require(raw, "name", line_no)),
+        arguments_json=canonical_json(raw.get("arguments", {})),
+    )
+
+
 def _parse_message(raw: dict[str, Any], line_no: int) -> RawMessage:
     role = _require(raw, "role", line_no)
     if role not in ("system", "user", "assistant", "tool"):
         raise JsonlFormatError(line_no, f"unknown message role {role!r}")
+    # content is optional, not merely nullable: a real OpenAI-style assistant message
+    # making only tool calls sends content: null with no text at all. str(None) would
+    # silently produce the literal 4-character token "None" in every such message's
+    # fingerprint -- exactly the kind of corruption a faithful mapping must not do.
+    content = raw.get("content")
     return RawMessage(
         role=role,
-        content=str(_require(raw, "content", line_no)),
+        content="" if content is None else str(content),
         tool_call_id=raw.get("tool_call_id"),
+        tool_calls=tuple(_parse_tool_call(c, line_no) for c in raw.get("tool_calls", [])),
     )
 
 
