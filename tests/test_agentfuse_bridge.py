@@ -373,3 +373,28 @@ def test_rejected_enum_values_are_never_echoed_in_the_error(field: str) -> None:
     with pytest.raises(AgentFuseShapeError) as excinfo:
         convert_captured_calls(client.captured, workload_id="wl")
     assert secret not in str(excinfo.value)
+
+
+@pytest.mark.parametrize("field", ["tool_choice", "strict", "message_name"])
+def test_unsupported_fields_are_rejected_before_they_can_silently_disappear(field: str) -> None:
+    """tool_choice (a top-level kwarg), a tool function's `strict`, and a message's `name`
+    all have no RawRequest/RawMessage/RawToolDef slot -- each must be rejected, not
+    quietly dropped by the fake client's capture or ignored by the converter's field
+    reads, which is what an earlier version of both did."""
+    kwargs: dict[str, Any] = {
+        "model": "m",
+        "messages": [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
+        "tools": [],
+    }
+    if field == "tool_choice":
+        kwargs["tool_choice"] = "auto"
+    elif field == "strict":
+        kwargs["tools"] = [
+            {"type": "function", "function": {"name": "search", "parameters": {"type": "object"}, "strict": True}}
+        ]
+    else:
+        kwargs["messages"][1]["name"] = "synthetic_speaker"
+    client = ScriptedClient([_text_response("done")])
+    client.chat.completions.create(**kwargs)
+    with pytest.raises(AgentFuseShapeError):
+        convert_captured_calls(client.captured, workload_id="wl")
