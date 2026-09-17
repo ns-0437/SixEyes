@@ -11,7 +11,7 @@ engineering — it blocks spend.
 
 ---
 
-## Phase 1 — Graph substrate  ← CURRENT
+## Phase 1 — Graph substrate  ← DONE (exit criterion met)
 
 Typed DAG engine, domain primitives, content-addressed cache, async executor, run manifest.
 
@@ -22,7 +22,7 @@ retrofitting a graph is the rewrite that kills the timeline.
 re-runs incrementally when one node's version bumps, rejects cycles and type mismatches at
 build time, and refuses to certify findings tainted by a `STOCHASTIC` node.
 
-## Phase 2 — Ingest & content-free fingerprinting  ← IN PROGRESS
+## Phase 2 — Ingest & content-free fingerprinting  ← EXIT CRITERION MET; SCOPE ITEMS OPEN
 
 OTel GenAI semconv reader, Anthropic/OpenAI SDK adapters, JSONL importer, provider-agnostic
 normalisation. Then the crown jewel: prefix hashing that localises divergence without ever
