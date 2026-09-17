@@ -51,9 +51,11 @@ not something to assert in advance of running it.
 
 ## How it works
 
-A typed DAG, not a linear script — because the actual product is a fixed core pipeline
-(ingest → fingerprint) feeding a growing, independently-testable set of detectors that
-need to run in parallel and re-analyze incrementally.
+A typed DAG, not a linear script — because the intended product is a fixed core pipeline
+(ingest → fingerprint) feeding a set of detectors that need to run in parallel and
+re-analyze incrementally as they're added. Today that set is exactly one node
+(`Divergence`); the pipeline below is what's actually built and tested, not a preview of
+detectors that don't exist yet.
 
 ```
 Customer trace (JSONL)
