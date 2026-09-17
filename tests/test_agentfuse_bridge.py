@@ -307,3 +307,48 @@ async def test_no_jsonl_file_is_ever_written(tmp_path: Path, monkeypatch: Any) -
 
     after_non_cache = {p for p in tmp_path.rglob("*") if cache_dir not in p.parents and p != cache_dir}
     assert after_non_cache == before
+
+
+# --- Regressions from an independent review of 7bfdf9d, 2026-09-17 -------------------
+#
+# Three real defects, each reproduced against the live repository before being fixed:
+# InMemoryTraceSource's cache identity could collide after CPython reuses a garbage-
+# collected object's id(); rejection errors echoed the actual rejected value instead of
+# just describing the field and expected shape; and the fake client silently dropped any
+# kwarg outside model/messages/tools (tool_choice), while the converter silently ignored
+# unrecognized nested keys (a tool's "strict", a message's "name") instead of rejecting
+# them, contradicting the bridge's own explicit-rejection contract.
+
+
+async def test_fresh_sources_do_not_collide_after_object_id_reuse(tmp_path: Path, monkeypatch: Any) -> None:
+    """Deterministically model CPython reusing a dead object's address for a brand-new
+    one -- this does not assign equal ids to two simultaneously live sources, only to a
+    dead one and a later one, which is exactly what happens in a long-running pilot
+    process across many traces. Before the fix (id(self) as cache identity), the second,
+    unrelated trace's Fingerprint output came back as the first trace's cached segments."""
+    bridge = importlib.import_module("pilots.agentfuse.bridge")
+    monkeypatch.setattr(bridge, "id", lambda obj: 123456, raising=False)
+
+    def trace(system: str) -> RawTrace:
+        return RawTrace("workload", (RawRequest("r", 1.0, "m", system, (), ()),))
+
+    def graph_for(source: InMemoryTraceSource) -> Graph:
+        graph = Graph("pilot")
+        graph.add(source)
+        graph.add(Fingerprint("fp", key=TEST_KEY), trace="source")
+        return graph
+
+    executor = Executor(cache=DiskCache(tmp_path / "cache"))
+    first_source = InMemoryTraceSource("source", trace=trace("alpha"))
+    first_ref = weakref.ref(first_source)
+    await executor.run(graph_for(first_source))
+    del first_source
+    gc.collect()
+    assert first_ref() is None  # confirms the old source is actually dead, not just unused
+
+    second_trace = trace("bravo")
+    second_source = InMemoryTraceSource("source", trace=second_trace)
+    second = await executor.run(graph_for(second_source))
+    assert second["source"].requests[0].system == "bravo"
+    expected = fingerprint_request(second_trace.requests[0], TEST_KEY)
+    assert second["fp"][0].segments == expected.segments
