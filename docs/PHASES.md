@@ -211,3 +211,13 @@ ranked report with dollar figures. This is the artifact that closes the first de
 Once detectors work, run them against 5 real workloads before building economics.
 If fewer than 3 show ≥25% recoverable input cost, stop. The rest of the roadmap is
 predicated on that number being real.
+
+**What this threshold does and does not establish.** ≥25% recoverable input cost on ≥3 of
+5 workloads is an exploratory *technical* threshold — evidence that the detection
+mechanism finds something real and sized worth pursuing. It is not evidence that anyone
+would pay for it: willingness to pay is a separate, harder question this number cannot
+answer on its own. Before concluding "go" off this gate, also look at net dollar value per
+workload (not just the percentage — 25% of a small bill is a small number) and get an
+explicit answer, not an inferred one, to "would you pay for this" from each workload
+owner. Treat the gate as one necessary input to a go/no-go decision, not the decision
+itself.
