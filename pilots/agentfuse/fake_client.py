@@ -68,11 +68,21 @@ class CapturedCall:
     own `messages` list for the next turn -- without that, every captured call would end
     up pointing at the SAME final list, which is exactly the kind of bug that would make
     every "request" in the trace look identical regardless of what actually changed turn
-    to turn."""
+    to turn.
+
+    `extra_kwargs` holds every OTHER keyword the call received (`tool_choice`,
+    `temperature`, anything else a real caller might pass), deep-copied the same way. An
+    earlier version of this class only kept `model`/`messages`/`tools` -- meaning a field
+    like `tool_choice` was discarded here, before the converter ever got a chance to reject
+    it, contradicting the bridge's own explicit-rejection contract (a field silently
+    dropped in the fake client is indistinguishable from one silently dropped anywhere
+    else). Capturing it here and rejecting it in `bridge.convert_captured_calls` is what
+    makes that rejection real rather than accidental."""
 
     model: str
     messages: list[dict[str, Any]]
     tools: list[dict[str, Any]]
+    extra_kwargs: dict[str, Any]
     response: FakeChatCompletion
     captured_at: float
 
@@ -115,11 +125,13 @@ class ScriptedClient:
                 f"{len(self.captured)}"
             )
         response = self._script.pop(0)
+        extra = {k: v for k, v in kwargs.items() if k not in ("model", "messages", "tools")}
         self.captured.append(
             CapturedCall(
                 model=str(kwargs.get("model", "")),
                 messages=copy.deepcopy(kwargs.get("messages", [])),
                 tools=copy.deepcopy(kwargs.get("tools", []) or []),
+                extra_kwargs=copy.deepcopy(extra),
                 response=response,
                 captured_at=time.time(),
             )
