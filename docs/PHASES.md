@@ -119,15 +119,32 @@ All 3 are permanent tests (`test_run_scoped.py`, `test_ingest_pipeline_integrati
 `test_fingerprint.py`), plus one combined end-to-end test exercising all three fixes
 together across a realistic multi-run sequence.
 
+**Fourth-round review, 2026-09-17 — one more found, fixed.** `RunScoped` (third round)
+guarantees a node's `config_key()` and `execute()` agree *within* one run; it does nothing
+for *two overlapping runs* sharing the same node instances. Reproduced: run A plans from a
+file reading "alpha" and pauses mid-`execute()`; run B, sharing the same node instances,
+refreshes them to "bravo"; run A resumes and silently consumes "bravo" under its own
+"alpha" cache identity, and a later run gets that wrong result served back from cache.
+Real per-run isolation (each run holding its own copy of prepared state, not shared on the
+node) is out of scope for the first version, per the review's own recommendation — the
+fix is `graph/run_isolation.py`: `Executor.run()` claims every node instance it will touch
+before `Graph.cache_keys()` can trigger any refresh, and rejects the run outright
+(`OverlappingRunError`) if another in-flight run already holds one. Released on every exit
+path (return, exception, or cancellation) via a `finally` wrapping the whole run. This is
+a permanent test (`test_run_isolation.py`, 6 cases) covering the core scenario, cleanup
+under cancellation and under a raised exception, and that independent graphs never trip
+the guard.
+
 **Still open for this phase:** OTel GenAI semconv reader, native Anthropic/OpenAI SDK
 adapters, real-tokenizer swap-in above, a real fix for RESIDENT/STOCHASTIC-descendant cache
 staleness (current fix is the safe-but-conservative "never cache it" rather than a cache
-key that incorporates actual runtime output).
+key that incorporates actual runtime output), and real per-run isolation for concurrent
+use of shared node instances (current fix rejects the overlap rather than solving it).
 
-**Pattern across three review rounds, worth naming rather than repeating silently:** each
+**Pattern across four review rounds, worth naming rather than repeating silently:** each
 round's fixes were correct on their own terms and still left a gap an adversarial re-read
 found immediately -- the review process is doing real work here, and there is no
-particular reason to assume a fourth pass would find nothing. Treat "verified" as "verified
+particular reason to assume a fifth pass would find nothing. Treat "verified" as "verified
 against what's been checked so far," not "complete," until a review comes back clean.
 
 ## Phase 3 — Detectors

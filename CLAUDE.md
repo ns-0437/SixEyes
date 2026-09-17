@@ -134,6 +134,25 @@ once, in `config_key()`, which `Graph.cache_keys()` guarantees runs before any n
 failed refresh can't leave a stale answer looking current; plain `resolve(compute)` in
 `execute()` reuses whatever that forced call just produced. Do not reinvent this per node.
 
+**`RunScoped` protects one run against itself, not two overlapping runs against each
+other.** A fourth-round review showed the gap directly: run A plans from a file reading
+"alpha" and pauses mid-`execute()`; run B, sharing the same node instances, refreshes that
+node's `RunScoped` state to "bravo"; run A resumes and silently consumes "bravo" under its
+own "alpha" cache identity, and a later run gets that wrong result served back from cache.
+Building real per-run isolation (each run holding its own copy of prepared state) is out
+of scope for the first version. The fix, per the review's own recommendation, is the
+smallest correct one: `graph/run_isolation.py` claims every node instance a run will touch
+*before* `Graph.cache_keys()` runs (since that's what triggers a `RunScoped` refresh), and
+rejects a run outright with `OverlappingRunError` if another still-in-flight run already
+holds one of those instances. The claim is released on every exit path — normal return,
+a raised exception, or the run's own task being cancelled. Two graphs built with
+independent node instances are never blocked by this, including two different `Executor`
+objects sharing instances (the registry is keyed by node identity, not by owning
+`Executor` or `Graph`) — only literally running the same node objects concurrently is
+refused. If concurrent use of shared node instances later becomes a real requirement, that
+needs prepared state to live in a per-run plan/context instead of on the node — a bigger
+design change, not a fix to bolt on here.
+
 A change that puts customer content into a payload is rejected on sight, no matter how
 useful. Our pitch is "we never see your prompts, we see the shape of them" — that sentence
 must remain literally true.

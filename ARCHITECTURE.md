@@ -65,6 +65,22 @@ forced call just produced, so the two calls provably agree within one run, while
 change between two *separate* runs on a reused node instance still takes effect on the
 next one.
 
+**Run isolation: rejecting overlapping runs, not solving concurrent ones.** `RunScoped`
+provably agrees with itself *within* one run; it says nothing about *two overlapping
+runs* sharing the same node instances. A fourth-round review reproduced exactly that: run
+A pauses mid-`execute()` after planning from "alpha"; run B, sharing the same node
+instances, refreshes them to "bravo"; run A resumes and silently consumes "bravo" under
+its own "alpha" cache identity. Real per-run isolation (each run holding its own copy of
+prepared state, not shared on the node) is the actual fix and is deliberately out of scope
+for now. `graph/run_isolation.py` instead refuses the overlap outright: `Executor.run()`
+claims every node instance it will touch before `Graph.cache_keys()` can trigger any
+`RunScoped` refresh, and raises `OverlappingRunError` if another still-in-flight run
+already holds one of them. The claim registry is a `weakref.WeakSet` keyed by node
+*instance* identity -- not owned by a particular `Executor` or `Graph` -- so two different
+`Executor` objects sharing node instances are caught too, while two independent graphs
+built with independent node instances are never blocked. Released on every exit path:
+normal return, a raised exception, or the run's task being cancelled.
+
 ## The analysis graph
 
 ```
@@ -139,6 +155,7 @@ sixeyes/
 │   │   ├── context.py         # RunContext, artifact store, taint tracking
 │   │   ├── executor.py        # async ready-queue scheduler, bounded concurrency
 │   │   ├── run_scoped.py      # RunScoped: resolve-once-per-run, never-stale value cache
+│   │   ├── run_isolation.py   # rejects overlapping runs sharing stateful node instances
 │   │   └── registry.py        # node registration / discovery
 │   ├── obs/
 │   │   └── trace.py           # per-node timing, cache hit/miss, run manifest
