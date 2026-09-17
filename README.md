@@ -171,6 +171,11 @@ this name until it has been.
 
 ## License
 
-None chosen yet. Until one is added, standard copyright applies — this code is visible,
-not licensed for reuse. Phase 6 of the build plan anticipates an eventual OSS collector
-component, but that decision hasn't been made for this repository as a whole.
+None chosen yet. Because this repository is public, GitHub's Terms of Service let anyone
+view and fork it — that much is unavoidable once a repo is public, license or not. What
+that does *not* grant is the reproduction, distribution, or derivative-works rights
+associated with an actual open-source license: standard copyright still applies to
+everything beyond viewing and forking. (See [GitHub's own licensing
+guidance](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository).)
+Phase 6 of the build plan anticipates an eventual OSS collector component, but a license
+decision for this repository as a whole hasn't been made.
