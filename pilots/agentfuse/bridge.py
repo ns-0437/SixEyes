@@ -13,19 +13,27 @@ reimplementation of the *shape* of `agentfuse.adapters.openai_sdk.guarded_tool_l
 message-building logic -- verified by reading that function's real source on 2026-09-17,
 not guessed -- so the fixtures this pilot tests against are faithful to a real integration
 target without creating a dependency on it. If AgentFuse's real adapter changes shape,
-this reimplementation can go stale; it is not exercised against the real package in CI.
+this reimplementation can go stale -- `tests/test_agentfuse_real_adapter.py` runs the
+actual `guarded_tool_loop` against this same fake client to catch that drift, but only
+when `AGENTFUSE_PATH` is set to a local checkout; it is opt-in, not part of the default
+suite or CI, for the same reason this module doesn't import the package directly.
 
 Every rejection below is explicit (`AgentFuseShapeError`), never a silent drop or a
 best-effort coercion: a shape this bridge doesn't understand is a bug to fix or a real
-gap to report, not something to guess past. Error messages describe *shape* (role names,
-types, positions) only -- never the actual content of a message or argument -- matching
-the same no-raw-content-in-errors discipline `ingest.jsonl._require_float` already
-follows.
+gap to report, not something to guess past. Error messages describe *field paths and
+expected shapes only* -- position, key name, expected type or allowed-value set -- and
+never the rejected value itself. An earlier version of this module interpolated the
+actual rejected value (a role string, a `type` field) into these messages with `!r`; an
+independent review demonstrated a planted sensitive marker surviving verbatim into the
+raised exception. A field that *looks* like a small fixed enum (role, type) is still
+untrusted input until validated, and the error path runs before any redaction the
+executor might otherwise apply -- so this module must not rely on that later layer.
 """
 
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any, Callable, ClassVar
 
 from sixeyes.graph.context import RunContext
@@ -34,10 +42,34 @@ from sixeyes.ingest.jsonl import canonical_json
 from sixeyes.ingest.types import RawMessage, RawRequest, RawToolCall, RawToolDef, RawTrace
 from pilots.agentfuse.fake_client import CapturedCall, FakeChatCompletion, ScriptedClient
 
+# Keys this bridge has an explicit, tested mapping for. Anything else present on a
+# captured object is rejected rather than silently ignored -- see the module docstring on
+# `extra_kwargs` and the "unsupported fields disappear" fix this set exists to close.
+_SUPPORTED_MESSAGE_KEYS = frozenset({"role", "content", "tool_call_id", "tool_calls"})
+_SUPPORTED_TOOL_KEYS = frozenset({"type", "function"})
+_SUPPORTED_TOOL_FUNCTION_KEYS = frozenset({"name", "description", "parameters"})
+_SUPPORTED_TOOL_CALL_KEYS = frozenset({"id", "type", "function"})
+_SUPPORTED_TOOL_CALL_FUNCTION_KEYS = frozenset({"name", "arguments"})
+
 
 class AgentFuseShapeError(ValueError):
     """A captured call did not match a shape this bridge explicitly supports. Raised
-    instead of silently dropping the unsupported part or guessing a mapping for it."""
+    instead of silently dropping the unsupported part or guessing a mapping for it. Never
+    constructed with the rejected value itself in its message -- only field paths, key
+    names, and expected shapes, all of which come from this module's own fixed schema
+    knowledge, not from customer-controlled data."""
+
+
+def _reject_unexpected_keys(obj: dict[str, Any], supported: frozenset[str], path: str) -> None:
+    """Reject any key outside `supported` -- explicitly, not by silently ignoring it. Key
+    *names* are safe to report (they come from a small fixed API schema, not free-form
+    content); the corresponding *values* are never included."""
+    extra = set(obj.keys()) - supported
+    if extra:
+        raise AgentFuseShapeError(
+            f"{path}: unsupported field(s) {sorted(extra)!r} -- supported fields are "
+            f"{sorted(supported)!r}"
+        )
 
 
 def run_scripted_loop(
