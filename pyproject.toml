@@ -18,8 +18,11 @@ packages = ["src/sixeyes"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+pythonpath = ["."]
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["src/sixeyes"]
+files = ["src/sixeyes", "pilots"]
+explicit_package_bases = true
+mypy_path = ["src", "."]
