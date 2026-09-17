@@ -20,11 +20,21 @@ doesn't mean.
 
 ## What this is, precisely
 
-Teams running LLM applications at scale lose 30–70% of their inference spend to
-structural waste that's invisible in a cost dashboard: an unstable prompt prefix silently
-breaking the provider's cache, redundant tool calls, re-sent conversation history, retry
-storms. SixEyes reads a trace export and tells you *exactly which field, at what offset,*
-broke the cache — and how much it's costing — without ever touching the request itself.
+SixEyes reads a JSONL trace export and reports, for each pair of consecutive requests,
+whether the model, system prompt, tool definitions, or message history changed — and if
+so, exactly which field and at what offset. That is a **structural divergence**, not a
+dollar figure and not proof that anything actually cost money: an unchanged request can
+still miss a provider's cache if the entry simply expired, and a changed request can
+still hit one if the change fell outside the cached prefix. `DivergenceReport` (see the
+diagram below) is explicit about this in its own field names — there is no cost field to
+misread as more than it is.
+
+Cost attribution (turning a structural finding into a dollar estimate), additional
+detectors (redundant tool calls, re-sent context, retry storms), and non-JSONL ingest
+(OTel GenAI, native provider SDKs) are on the roadmap (`docs/PHASES.md`) — planned, not
+built. No claim is made here about how much spend this class of problem represents for
+any particular team; that's an empirical question the kill gate below exists to answer,
+not something to assert in advance of running it.
 
 **What it is not:**
 
