@@ -223,6 +223,47 @@ worth noting as the same discipline that produced every other fix in this log.
   "never happens under contention." Anyone who hits it again should capture the full
   traceback verbatim and add it here rather than re-running past it silently.
 
+**Bridge review round, three reproduced defects (2026-09-17, second follow-up).** An
+independent review of the memory-only capture shim (commit `7bfdf9d`) reproduced 7 failing
+regressions against the live repository before any fix, across three real defects:
+
+1. `InMemoryTraceSource.config_key()` used `id(self)` as cache identity. CPython reuses a
+   garbage-collected object's address, so a freshly constructed source for a genuinely new
+   trace could receive a previous, dead source's `id()` -- and a downstream Fingerprint
+   node keyed off that identity would then serve the previous trace's cached segments for
+   different content. Fixed: a random `uuid.uuid4()` nonce generated once per instance,
+   unrelated to memory layout, replaces `id(self)` in the cache key (`InMemoryTraceSource`
+   version bumped to `"2"`).
+2. Rejection errors interpolated the actual rejected value (`!r`) for role, tool `type`,
+   and tool-call `type` fields. A planted sensitive marker survived verbatim into the
+   raised `AgentFuseShapeError` in each case -- a field that *looks* like a small fixed
+   enum is still untrusted input until validated, and this error path runs before any
+   redaction the executor might otherwise apply. Fixed: every rejection now reports a
+   field path and the expected shape/allowed values only, never the value that failed.
+3. Three fields disappeared silently instead of being explicitly rejected: `tool_choice`
+   (a top-level kwarg the fake client didn't capture at all, so the converter never got a
+   chance to see or reject it), a tool function's `strict`, and a message's `name` (both
+   present in captured data but silently ignored by the converter reading only recognized
+   keys). This contradicted the bridge's own stated contract. Fixed: `CapturedCall` now
+   keeps every kwarg outside `model`/`messages`/`tools` in `extra_kwargs`, and the
+   converter explicitly rejects any top-level or nested key it has no supported mapping
+   for, rather than reading past it.
+
+The same review also flagged a real coverage gap: every existing test exercised
+`run_scripted_loop`, SixEyes's own reimplementation of `guarded_tool_loop`'s shape, never
+the actual AgentFuse package. `tests/test_agentfuse_real_adapter.py` closes that: it
+imports the real `guarded_tool_loop` (opt-in via `AGENTFUSE_PATH`, pointed at a local
+checkout -- not a hardcoded path, not a production dependency, skipped by default) and
+runs it against the same fake client, confirming that a real captured call with tools
+present genuinely does carry `tool_choice` and is genuinely rejected, and that the
+adapter's actual "rerun" restart mechanism (`_apply_directive`, triggered here via a
+minimal fake monitor rather than real threshold tuning) truncates the captured message
+history exactly as documented. Verified locally against the real checkout: 169 tests pass
+with `AGENTFUSE_PATH` set (166 plus these 3; they skip without it), mypy strict is clean
+across 28 source files (`src/sixeyes` and `pilots`) -- the mypy verification an external
+review's own environment (Python 3.12 with a Python-3.11-only compiled mypy dependency)
+could not perform.
+
 ## Phase 3 — Detectors
 
 `PrefixDivergence`, `ToolDefDrift`, `ContextResend`, `RedundantToolCall`, `RetryBurn`.
