@@ -165,10 +165,10 @@ does not remove the judgment call. A run against real data is authorized only wh
    (`ARCHITECTURE.md`) rejects overlapping runs that share node instances — it refuses
    the unsafe case, it does not make concurrent runs against shared state safe. Don't try
    to parallelize a pilot across the same graph/node instances.
-3. **Findings are reported as what they are.** Nothing produced today clears the
-   "measured" confidence tier (see the diagram above) — present results to the workload
-   owner as structural findings, not as a savings number, until there's a `verification`
-   row to back one.
+3. **Findings are reported as what they are.** `DivergenceReport` is a structural
+   observation with no cost figure and no confidence tier attached (see the diagram
+   above) — present results to the workload owner as structural findings, not as a
+   savings number. Cost estimates and verified savings are not yet implemented.
 
 ## Naming
 
