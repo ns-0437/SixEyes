@@ -147,8 +147,8 @@ sixeyes/
 │   ├── ingest/            # trace importers — JSONL (zero-instrumentation) shipped;
 │   │                      #   OTel GenAI / native SDK adapters not yet
 │   └── fingerprint/       # the content-free fingerprinting + divergence mechanism
-└── tests/                 # 139 tests, including permanent regressions for every
-                           #   finding from all four review rounds
+└── tests/                 # 140 tests, including permanent regressions for every
+                           #   finding from all five review rounds
 ```
 
 ## Running it
