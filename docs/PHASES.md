@@ -135,17 +135,36 @@ a permanent test (`test_run_isolation.py`, 6 cases) covering the core scenario, 
 under cancellation and under a raised exception, and that independent graphs never trip
 the guard.
 
+**Fifth-round review, 2026-09-17 — same day, a gap in the fourth round's own fix.**
+`claim()` was only called against `needed` -- the requested targets' ancestor closure --
+but `Graph.cache_keys()` (called immediately after) computes an identity for *every* node
+in the graph, regardless of target, because a node's cache key can only be as trustworthy
+as its own freshly-computed `config_key()`. Reproduced: run A targets `fingerprint` on a
+graph that also has an unrelated `other` node, plans from "alpha", and pauses
+mid-`execute()`; run B targets only `other` -- its claim succeeds, since it never asked
+for `source`/`fingerprint` -- but B's `cache_keys()` call still silently refreshes
+`source`'s `RunScoped` snapshot to "bravo" on its way to computing `other`'s identity. Run
+A resumes holding the wrong content under its own, now-stale cache identity, and a later
+run receives the contaminated cached fingerprint. Fixed by claiming every node in the
+*graph*, not just the requested targets' ancestors -- the invariant is "no run may prepare
+or execute an unclaimed shared node," and preparation (`cache_keys()`) touches the whole
+graph regardless of target, so the claim has to as well. One-line fix in `Executor.run()`;
+permanent test added to `test_run_isolation.py`.
+
 **Still open for this phase:** OTel GenAI semconv reader, native Anthropic/OpenAI SDK
 adapters, real-tokenizer swap-in above, a real fix for RESIDENT/STOCHASTIC-descendant cache
 staleness (current fix is the safe-but-conservative "never cache it" rather than a cache
 key that incorporates actual runtime output), and real per-run isolation for concurrent
-use of shared node instances (current fix rejects the overlap rather than solving it).
+use of shared node instances (current fix rejects the overlap rather than solving it, and
+now conservatively claims the whole graph per run rather than only the requested targets).
 
-**Pattern across four review rounds, worth naming rather than repeating silently:** each
+**Pattern across five review rounds, worth naming rather than repeating silently:** each
 round's fixes were correct on their own terms and still left a gap an adversarial re-read
-found immediately -- the review process is doing real work here, and there is no
-particular reason to assume a fifth pass would find nothing. Treat "verified" as "verified
-against what's been checked so far," not "complete," until a review comes back clean.
+found immediately -- twice now within the *same* fix (the fourth round's overlap guard had
+its own gap found the same day, in round five). The review process is doing real work
+here, and there is no particular reason to assume a sixth pass would find nothing. Treat
+"verified" as "verified against what's been checked so far," not "complete," until a
+review comes back clean.
 
 ## Phase 3 — Detectors
 

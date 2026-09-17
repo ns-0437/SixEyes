@@ -73,13 +73,20 @@ instances, refreshes them to "bravo"; run A resumes and silently consumes "bravo
 its own "alpha" cache identity. Real per-run isolation (each run holding its own copy of
 prepared state, not shared on the node) is the actual fix and is deliberately out of scope
 for now. `graph/run_isolation.py` instead refuses the overlap outright: `Executor.run()`
-claims every node instance it will touch before `Graph.cache_keys()` can trigger any
-`RunScoped` refresh, and raises `OverlappingRunError` if another still-in-flight run
-already holds one of them. The claim registry is a `weakref.WeakSet` keyed by node
-*instance* identity -- not owned by a particular `Executor` or `Graph` -- so two different
-`Executor` objects sharing node instances are caught too, while two independent graphs
-built with independent node instances are never blocked. Released on every exit path:
-normal return, a raised exception, or the run's task being cancelled.
+claims **every node in the graph** before `Graph.cache_keys()` can trigger any `RunScoped`
+refresh, and raises `OverlappingRunError` if another still-in-flight run already holds one
+of them. It must be every node, not just the requested targets' ancestor closure: a
+fifth-round review found that `cache_keys()` computes an identity -- and therefore calls
+`config_key()` -- for every node in the graph regardless of which targets were asked for,
+so a target-specific run (`targets=["other"]`) that claimed only its own ancestors could
+still have `cache_keys()` silently refresh an unrelated, still-in-flight run's `RunScoped`
+state elsewhere in the same graph. The invariant this enforces is "no run may prepare or
+execute an unclaimed shared node," and preparation (`cache_keys()`) touches the whole
+graph, so the claim has to as well. The claim registry is a `weakref.WeakSet` keyed by
+node *instance* identity -- not owned by a particular `Executor` or `Graph` -- so two
+different `Executor` objects sharing node instances are caught too, while two independent
+graphs built with independent node instances are never blocked. Released on every exit
+path: normal return, a raised exception, or the run's task being cancelled.
 
 ## The analysis graph
 

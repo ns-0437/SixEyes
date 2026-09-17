@@ -141,17 +141,24 @@ node's `RunScoped` state to "bravo"; run A resumes and silently consumes "bravo"
 own "alpha" cache identity, and a later run gets that wrong result served back from cache.
 Building real per-run isolation (each run holding its own copy of prepared state) is out
 of scope for the first version. The fix, per the review's own recommendation, is the
-smallest correct one: `graph/run_isolation.py` claims every node instance a run will touch
-*before* `Graph.cache_keys()` runs (since that's what triggers a `RunScoped` refresh), and
+smallest correct one: `graph/run_isolation.py` claims **every node in the graph** —
+not just the requested targets' ancestors — *before* `Graph.cache_keys()` runs, and
 rejects a run outright with `OverlappingRunError` if another still-in-flight run already
-holds one of those instances. The claim is released on every exit path — normal return,
-a raised exception, or the run's own task being cancelled. Two graphs built with
-independent node instances are never blocked by this, including two different `Executor`
-objects sharing instances (the registry is keyed by node identity, not by owning
-`Executor` or `Graph`) — only literally running the same node objects concurrently is
-refused. If concurrent use of shared node instances later becomes a real requirement, that
-needs prepared state to live in a per-run plan/context instead of on the node — a bigger
-design change, not a fix to bolt on here.
+holds one of those instances. It has to be every node, not just the ones this run's
+targets depend on: a fifth-round review found that `cache_keys()` computes an identity for
+every node in the graph regardless of which targets were requested (a node's key can only
+be as trustworthy as its own freshly-computed `config_key()`), so a target-specific call
+that only claimed its own ancestor closure — `targets=["other"]` on a graph that also has
+an in-flight `source`/`fingerprint` run — could still have `cache_keys()` silently refresh
+an unrelated run's `RunScoped` state. The invariant is **no run may prepare or execute an
+unclaimed shared node**, and preparation touches the whole graph, so the claim must too.
+The claim is released on every exit path — normal return, a raised exception, or the run's
+own task being cancelled. Two graphs built with independent node instances are never
+blocked by this, including two different `Executor` objects sharing instances (the
+registry is keyed by node identity, not by owning `Executor` or `Graph`) — only literally
+running the same node objects concurrently is refused. If concurrent use of shared node
+instances later becomes a real requirement, that needs prepared state to live in a per-run
+plan/context instead of on the node — a bigger design change, not a fix to bolt on here.
 
 A change that puts customer content into a payload is rejected on sight, no matter how
 useful. Our pitch is "we never see your prompts, we see the shape of them" — that sentence
