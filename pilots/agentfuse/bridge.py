@@ -187,10 +187,7 @@ def _convert_message(message: dict[str, Any], call_index: int, msg_index: int) -
         # A real OpenAI-style multimodal message (a list of content blocks) would land
         # here -- AgentFuse's own adapter never produces one, but this bridge must not
         # silently str() it into something that looks like text and isn't.
-        raise AgentFuseShapeError(
-            f"call {call_index} message {msg_index}: 'content' must be a string or null "
-            f"(got type {type(content).__name__})"
-        )
+        raise AgentFuseShapeError(f"{path}.content: must be a string or null (got type {type(content).__name__})")
     raw_tool_calls = message.get("tool_calls") or []
     tool_calls = tuple(
         _convert_tool_call(tc, call_index, msg_index, i) for i, tc in enumerate(raw_tool_calls)
@@ -199,20 +196,29 @@ def _convert_message(message: dict[str, Any], call_index: int, msg_index: int) -
 
 
 def _convert_call(call: CapturedCall, workload_id: str, index: int) -> RawRequest:
-    if not call.messages or call.messages[0].get("role") != "system":
+    path = f"call {index}"
+    if call.extra_kwargs:
+        # Top-level kwargs this bridge has no mapping for (tool_choice, temperature, ...).
+        # Reported by key name only -- these are call-shape parameters, not message
+        # content, so the key names themselves carry no customer data.
         raise AgentFuseShapeError(
-            f"call {index}: expected messages[0] to be the system message, found "
-            f"{'no messages' if not call.messages else call.messages[0].get('role')!r}"
+            f"{path}: unsupported top-level field(s) {sorted(call.extra_kwargs.keys())!r} -- "
+            f"this bridge has no mapping for them yet"
         )
+    if not call.messages:
+        raise AgentFuseShapeError(f"{path}.messages[0]: expected a system message, found no messages")
+    if call.messages[0].get("role") != "system":
+        raise AgentFuseShapeError(f"{path}.messages[0].role: expected 'system'")
+    _reject_unexpected_keys(call.messages[0], _SUPPORTED_MESSAGE_KEYS, f"{path}.messages[0]")
     for later_index, message in enumerate(call.messages[1:], start=1):
         if message.get("role") == "system":
             raise AgentFuseShapeError(
-                f"call {index}: found a second system message at index {later_index}, which "
-                f"this bridge does not support (system must be exactly messages[0])"
+                f"{path}.messages[{later_index}]: a second system message is not supported "
+                f"(system must be exactly messages[0])"
             )
     system_content = call.messages[0].get("content")
     if not isinstance(system_content, str):
-        raise AgentFuseShapeError(f"call {index}: system message content must be a string")
+        raise AgentFuseShapeError(f"{path}.messages[0].content: must be a string")
 
     messages = tuple(
         _convert_message(m, index, i) for i, m in enumerate(call.messages[1:], start=1)
