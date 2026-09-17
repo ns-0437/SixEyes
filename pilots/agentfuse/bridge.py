@@ -167,16 +167,19 @@ def _convert_tool_call(tc: dict[str, Any], call_index: int, msg_index: int, tc_i
     # isn't what the model actually produced.
     if not isinstance(arguments, str):
         raise AgentFuseShapeError(
-            f"call {call_index} message {msg_index} tool_call {tc_index}: 'function.arguments' must "
-            f"be a string (got type {type(arguments).__name__})"
+            f"{path}.function.arguments: must be a string (got type {type(arguments).__name__})"
         )
     return RawToolCall(id=tc_id, name=name, arguments_raw=arguments)
 
 
 def _convert_message(message: dict[str, Any], call_index: int, msg_index: int) -> RawMessage:
+    path = f"call {call_index} message {msg_index}"
+    _reject_unexpected_keys(message, _SUPPORTED_MESSAGE_KEYS, path)
     role = message.get("role")
     if role not in ("user", "assistant", "tool"):
-        raise AgentFuseShapeError(f"call {call_index} message {msg_index}: unsupported role {role!r}")
+        raise AgentFuseShapeError(
+            f"{path}.role: unsupported value -- expected one of 'user', 'assistant', 'tool'"
+        )
     content = message.get("content")
     if content is None:
         content = ""
