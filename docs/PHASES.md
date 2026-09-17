@@ -25,12 +25,19 @@ build time, and refuses to certify findings tainted by a `STOCHASTIC` node.
 ## Phase 2 — Ingest & content-free fingerprinting  ← EXIT CRITERION MET; SCOPE ITEMS OPEN
 
 OTel GenAI semconv reader, Anthropic/OpenAI SDK adapters, JSONL importer, provider-agnostic
-normalisation. Then the crown jewel: prefix hashing that localises divergence without ever
-holding prompt text.
+normalisation. Then the crown jewel: prefix hashing that localises divergence while
+keeping raw prompt text out of anything that persists, is logged, or is exported beyond
+the fingerprinting step itself. Raw text *is* held transiently in memory during ingest and
+fingerprinting -- `content_bearing` exists precisely to track that -- the guarantee is
+about what crosses the collector boundary into a cache entry, a manifest, or a report, not
+that the process never touches the text at all.
 
 **Exit criterion:** given two requests differing by one injected timestamp, we report the
-divergence offset correctly, and a byte-level audit of the emitted payload proves zero
-recoverable customer content.
+divergence offset correctly, and a test demonstrates that several planted secret strings
+do not appear in the emitted payload in any form (byte-level, not merely absent as
+plaintext). That establishes the specific tested property -- it is evidence toward
+content-freeness, not a formal proof that no customer content could ever be recoverable
+from any output under any input.
 
 **Shipped so far (2026-09-16, hardened same day after an independent review):**
 - `ingest.jsonl` — the zero-instrumentation path: one documented JSON-object-per-line
