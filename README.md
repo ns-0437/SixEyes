@@ -73,7 +73,10 @@ Customer trace (JSONL)
          ▼
    DivergenceReport
    (segment, offset, cache_missed_units — a structural
-    finding, not yet a dollar figure or a proof of savings)
+    finding. `CLAUDE.md` rule 1 defines four confidence
+    tiers for any number derived from this later —
+    measured / derived / estimated / speculative — and
+    nothing produced today is above "estimated.")
 ```
 
 **The governing rule, enforced by the runtime, not just by convention:** every node
