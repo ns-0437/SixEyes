@@ -114,16 +114,22 @@ class Executor:
             graph.node(node_id)  # raises GraphBuildError on unknown target
 
         needed = self._ancestors(graph, wanted)
-        nodes_in_use = [graph.node(node_id) for node_id in needed]
 
-        # Claim every node this run will touch BEFORE anything -- including
-        # graph.cache_keys() below, since that is what triggers a RunScoped node's forced
-        # refresh (JsonlSource re-reading its file, Fingerprint re-resolving its key). A
-        # fourth-round review demonstrated that two overlapping runs sharing node
-        # instances can otherwise have one run's refresh silently replace the other's
-        # still-in-use prepared state. Building real per-run isolation (each run holding
-        # its own copy of prepared state) is out of scope for now; refusing the overlap
-        # outright is the smallest correct fix, per the review's own recommendation.
+        # Claim every node in the GRAPH -- not just `needed` -- before anything else,
+        # including graph.cache_keys() below. A fifth-round review found that
+        # cache_keys() visits every node in the graph to compute identities (it has to:
+        # a node's cache key can only be as trustworthy as its own config_key(), computed
+        # fresh), regardless of which targets were requested -- so a target-specific run
+        # (e.g. targets=["other"]) that only claimed its own ancestor closure could still
+        # have cache_keys() silently refresh a RunScoped node (JsonlSource's file
+        # snapshot, Fingerprint's key) belonging to an unrelated, still-in-flight run on
+        # the same graph. Claiming the whole graph closes that gap: the invariant is "no
+        # run may prepare or execute an unclaimed shared node," and cache_keys() touches
+        # every node during preparation, so every node must be claimed, not just the
+        # requested target's ancestors. Two independent Graph objects (even with
+        # identically-named nodes) are still never blocked -- the registry is keyed by
+        # node instance identity, not by node id or by Graph.
+        nodes_in_use = [graph.node(node_id) for node_id in graph.node_ids]
         claim(nodes_in_use)
         try:
             keys = graph.cache_keys()

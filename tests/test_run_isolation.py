@@ -190,3 +190,63 @@ async def test_sequential_runs_on_the_same_graph_are_never_rejected() -> None:
     for _ in range(5):
         result = await executor.run(graph)
         assert result["q"] == 1
+
+
+async def test_unrelated_target_cannot_touch_another_runs_claimed_node(tmp_path: Path) -> None:
+    """Regression (independent fifth-round review, 2026-09-17): the fourth-round fix
+    claimed only `needed` -- the requested targets' ancestor closure -- but
+    Graph.cache_keys() (called right after claiming) computes identities for *every* node
+    in the graph, regardless of target, since a node's cache key can only be as
+    trustworthy as its own freshly-computed config_key(). A run targeting an unrelated
+    node in the same graph (targets=["other"]) therefore claimed nothing that overlapped
+    with an in-flight run on `source`/`fingerprint`, but its cache_keys() call still
+    silently refreshed `source`'s RunScoped snapshot -- the in-flight run resumed holding
+    the wrong content under its own, now-mismatched cache identity, and a later run
+    received the contaminated cached fingerprint. Fixed by claiming every node in the
+    *graph*, not just the requested targets' ancestors, since cache_keys() touches all of
+    them during preparation regardless of what was asked for."""
+    path = tmp_path / "trace.jsonl"
+    started = asyncio.Event()
+    resume = asyncio.Event()
+
+    class GatedSource(JsonlSource):
+        async def execute(self, ctx: Any, **kwargs: Any) -> Any:
+            if not started.is_set():
+                started.set()
+                await resume.wait()
+            return await super().execute(ctx, **kwargs)
+
+    @node(output=str)
+    async def unrelated(ctx: Any) -> str:
+        return "independent"
+
+    graph = Graph("target_selection")
+    graph.add(GatedSource("source", path=str(path)))
+    graph.add(Fingerprint("fingerprint", key=b"\x01" * 32), trace="source")
+    graph.add(unrelated("other"))
+    executor = Executor(cache=DiskCache(tmp_path / "cache"))
+
+    _write(path, "alpha")
+    task = asyncio.create_task(executor.run(graph, targets=["fingerprint"]))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        _write(path, "bravo")
+        # Either conservative whole-graph rejection or safely restricted planning is
+        # acceptable -- the invariant under test is that a successful B must not mutate
+        # A's already-prepared state, not which specific contract achieves that.
+        try:
+            second = await executor.run(graph, targets=["other"])
+        except OverlappingRunError:
+            pass
+        else:
+            assert second["other"] == "independent"
+    finally:
+        resume.set()
+
+    first = await task
+    assert first["source"].requests[0].system == "alpha"
+
+    _write(path, "alpha")
+    later = await executor.run(graph, targets=["fingerprint"])
+    expected = fingerprint_request(later["source"].requests[0], b"\x01" * 32)
+    assert later["fingerprint"][0].segments == expected.segments
