@@ -1,8 +1,12 @@
 # SixEyes
 
-A read-only forensic analyzer for agentic LLM waste. It ingests execution traces,
-diagnoses recoverable spend, localises the exact cause, and prescribes a fix — **without
-ever modifying a production request.**
+An experimental, read-only analyzer that imports JSONL LLM execution traces and reports
+**structural changes** between consecutive requests — the specific field and position
+where one request diverged from the one before it. It never modifies a production
+request. Cost attribution, additional waste detectors, and broader provider integrations
+are planned, not built; customer savings have not yet been validated. See
+[What this is, precisely](#what-this-is-precisely) below for exactly what that does and
+doesn't mean.
 
 > **Status: pre-MVP, internal.** Phase 1 (graph substrate) is done. Phase 2 (ingest +
 > content-free fingerprinting) has met its exit criterion via the JSONL path and has been
