@@ -153,9 +153,12 @@ somewhere is a controlled pilot, not a precondition that has to be satisfied bef
 pilot can happen. This section defines what "authorized" means for that pilot; it is not
 an invitation to run this against arbitrary customer data without one.
 
-SixEyes has no network access and no way to reach a provider account or live production
-traffic — it only ever reads a JSONL file someone hands it. That narrows the risk but
-does not remove the judgment call. A run against real data is authorized only when:
+The current pipeline makes no network requests and has no way to reach a provider account
+or live production traffic — it only ever reads a JSONL file someone hands it. That's a
+property of what this code does, not a sandboxing guarantee: nothing here isolates the
+Python process from the network the way a container or a firewall rule would. It narrows
+the risk but does not remove the judgment call. A run against real data is authorized only
+when:
 
 1. **The workload owner explicitly consents** to exporting that specific data for this
    specific purpose, having read this README and `CLAUDE.md` and understood the actual
