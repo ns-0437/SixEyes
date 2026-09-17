@@ -121,6 +121,20 @@ demonstrated the edit case being silently reported as no change. Fixed with an e
 editing inserts units before that marker and breaks the prefix relationship; a genuine
 append still matches the old chain in full, marker included.
 
+`RawMessage.tool_calls` exists because a real workload compatibility check found a gap:
+the schema had a slot for a tool's *result* (`tool_call_id` on a `role="tool"` message)
+but none for a message's outgoing *request* to call a tool — a real OpenAI-style
+assistant turn making only a tool call (`content: null`) would otherwise have to be
+either silently dropped or stringified into `content`, and either could make a request
+that actually changed compare as unchanged. Each `RawToolCall` is fingerprinted as its
+own tagged unit (`Fingerprint` version 6), same treatment as `RawToolDef`. Note precisely
+what this does *not* do: SixEyes has no redundant-tool-call detector (Phase 3, unbuilt).
+Two identical tool calls appended as separate turns correctly report `NONE` (safe
+append growth) today — repeated calls are a lead a future detector would reason about
+(arguments, results, intervening state, retry cause), not something this comparison is
+meant to catch. Don't let "we can now fingerprint tool calls" drift into "we detect
+redundant tool calls" — the two are not the same claim.
+
 Anything a node resolves once and reuses (a file's bytes, a local key) **must live in a
 `RunScoped` (graph/run_scoped.py), never a bare instance attribute the node sets once and
 trusts forever.** Two independent bugs — `JsonlSource` silently replaying a prior run's

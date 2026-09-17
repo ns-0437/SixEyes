@@ -173,6 +173,21 @@ here, and there is no particular reason to assume a sixth pass would find nothin
 "verified" as "verified against what's been checked so far," not "complete," until a
 review comes back clean.
 
+**First pilot, preparation phase (2026-09-17).** Moving toward one controlled pilot on
+AgentFuse (a real, actively-maintained agentic tool-use project) surfaced a real ingest
+gap before any real data was touched: `RawMessage` had no slot for an assistant's
+outgoing `tool_calls`, only for a tool's result. A real OpenAI-style tool-use loop would
+have hit that gap immediately -- either silently dropping tool-call data or stringifying
+it, both of which could make an actually-changed request compare as unchanged. Fixed
+(`RawToolCall`, `Fingerprint` version 6) and tested entirely offline with synthetic data
+that mirrors the real shape (no API calls, no real project data) -- see `test_tool_calls.py`.
+Explicitly confirmed as part of that work: SixEyes still has no redundant-tool-call
+detector, so two genuinely identical tool calls appended as separate turns correctly
+report no divergence today. The first real pilot session, once authorized, validates the
+ingest/fingerprinting mechanism against real agentic-loop-shaped data and checks whether
+the agent's own context stays cache-stable turn to turn -- it does not, and cannot yet,
+surface a redundant-tool-call finding.
+
 ## Phase 3 — Detectors
 
 `PrefixDivergence`, `ToolDefDrift`, `ContextResend`, `RedundantToolCall`, `RetryBurn`.
