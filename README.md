@@ -88,22 +88,24 @@ only be cleared by a node that explicitly, auditably declares `declassifies = Tr
 `ARCHITECTURE.md` for the full node-kind table and `CLAUDE.md` for the 13 working rules
 this is built against.
 
-## Why this has been reviewed four times
+## Review history
 
-Before this touches a real customer's prompts, an independent adversarial review ran
-against the codebase four separate times. Each round found real, reproducible bugs the
-previous round's tests didn't catch — an unkeyed hash chain that let low-entropy words be
-dictionary-guessed from exported fingerprints, a passthrough node that could silently
-persist raw content, a certification bypass, a cache-staleness bug across overlapping
-runs. All of them are fixed, and all of them are now permanent regression tests in this
-repo (`tests/`), not just a note in a changelog.
+SixEyes has undergone iterative AI-assisted code reviews with reproducible regression
+tests — five rounds so far, each run independently against the actual codebase. These
+reviews identified and corrected privacy and correctness defects: an unkeyed hash chain
+that let low-entropy words be dictionary-guessed from exported fingerprints, a passthrough
+node that could silently persist raw content, a certification bypass, and two separate
+run-isolation bugs across overlapping executions (the second of which was a gap in the
+first one's own fix, found the same day it shipped). Every finding is fixed and is now a
+permanent regression test in `tests/`, not just a changelog entry.
 
-This isn't a footnote — it's the actual argument for why the content-freeness claim is
-credible: it's been attacked four times and is still standing, not just asserted once and
-left alone. The full history is in `docs/PHASES.md`, including what each round found and
-exactly which test file guards against it now. The honest caveat sits right next to it: a
-fifth round finding something is more likely than not, and "verified" here means "verified
-against what's been checked so far," not "complete."
+**Passing tests establish specific tested properties; they do not constitute a formal
+security audit or prove universal privacy or correctness.** Known limitations and any
+unresolved findings are tracked in `docs/PHASES.md` alongside the implementation as they're
+found, not smoothed over once a round's fixes ship. Two rounds out of five found a gap in
+the immediately preceding round's own fix — there is no basis here for assuming a sixth
+round would find nothing, and "verified" means verified against what has actually been
+checked so far, not complete.
 
 ## Project layout
 
