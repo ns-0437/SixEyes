@@ -128,43 +128,38 @@ def run_scripted_loop(
 
 
 def _convert_tool(tool: dict[str, Any], call_index: int, tool_index: int) -> RawToolDef:
+    path = f"call {call_index} tool {tool_index}"
+    _reject_unexpected_keys(tool, _SUPPORTED_TOOL_KEYS, path)
     if tool.get("type") != "function":
-        raise AgentFuseShapeError(
-            f"call {call_index} tool {tool_index}: unsupported tool type {tool.get('type')!r}, "
-            f"expected 'function'"
-        )
+        raise AgentFuseShapeError(f"{path}.type: unsupported value -- only 'function' is supported")
     fn = tool.get("function")
     if not isinstance(fn, dict):
-        raise AgentFuseShapeError(f"call {call_index} tool {tool_index}: missing 'function' object")
+        raise AgentFuseShapeError(f"{path}.function: must be an object")
+    _reject_unexpected_keys(fn, _SUPPORTED_TOOL_FUNCTION_KEYS, f"{path}.function")
     name = fn.get("name")
     if not isinstance(name, str) or not name:
-        raise AgentFuseShapeError(f"call {call_index} tool {tool_index}: 'function.name' must be a non-empty string")
+        raise AgentFuseShapeError(f"{path}.function.name: must be a non-empty string")
     description = fn.get("description", "")
     if not isinstance(description, str):
-        raise AgentFuseShapeError(f"call {call_index} tool {tool_index}: 'function.description' must be a string")
+        raise AgentFuseShapeError(f"{path}.function.description: must be a string")
     return RawToolDef(name=name, description=description, schema_json=canonical_json(fn.get("parameters", {})))
 
 
 def _convert_tool_call(tc: dict[str, Any], call_index: int, msg_index: int, tc_index: int) -> RawToolCall:
+    path = f"call {call_index} message {msg_index} tool_call {tc_index}"
+    _reject_unexpected_keys(tc, _SUPPORTED_TOOL_CALL_KEYS, path)
     if tc.get("type") != "function":
-        raise AgentFuseShapeError(
-            f"call {call_index} message {msg_index} tool_call {tc_index}: unsupported type "
-            f"{tc.get('type')!r}, expected 'function'"
-        )
+        raise AgentFuseShapeError(f"{path}.type: unsupported value -- only 'function' is supported")
     tc_id = tc.get("id")
     if not isinstance(tc_id, str) or not tc_id:
-        raise AgentFuseShapeError(f"call {call_index} message {msg_index} tool_call {tc_index}: missing 'id'")
+        raise AgentFuseShapeError(f"{path}.id: must be a non-empty string")
     fn = tc.get("function")
     if not isinstance(fn, dict):
-        raise AgentFuseShapeError(
-            f"call {call_index} message {msg_index} tool_call {tc_index}: missing 'function' object"
-        )
+        raise AgentFuseShapeError(f"{path}.function: must be an object")
+    _reject_unexpected_keys(fn, _SUPPORTED_TOOL_CALL_FUNCTION_KEYS, f"{path}.function")
     name = fn.get("name")
     if not isinstance(name, str) or not name:
-        raise AgentFuseShapeError(
-            f"call {call_index} message {msg_index} tool_call {tc_index}: 'function.name' must be a "
-            f"non-empty string"
-        )
+        raise AgentFuseShapeError(f"{path}.function.name: must be a non-empty string")
     arguments = fn.get("arguments")
     # Must be a string, never parsed -- see RawToolCall.arguments_raw's docstring. A
     # nested object here would mean this bridge (or its fixture) built the wrong shape;
