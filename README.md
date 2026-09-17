@@ -109,31 +109,6 @@ the immediately preceding round's own fix — there is no basis here for assumin
 round would find nothing, and "verified" means verified against what has actually been
 checked so far, not complete.
 
-## Running this against a real workload
-
-The kill gate in `docs/PHASES.md` (5 real workloads, ≥25% recoverable cost) is the
-evidence this whole idea stands or falls on — it has to come from somewhere, and that
-somewhere is a controlled pilot, not a precondition that has to be satisfied before any
-pilot can happen. This section defines what "authorized" means for that pilot; it is not
-an invitation to run this against arbitrary customer data without one.
-
-SixEyes has no network access and no way to reach a provider account or live production
-traffic — it only ever reads a JSONL file someone hands it. That narrows the risk but
-does not remove the judgment call. A run against real data is authorized only when:
-
-1. **The workload owner explicitly consents** to exporting that specific data for this
-   specific purpose, having read this README and `CLAUDE.md` and understood the actual
-   scope of what's guaranteed (structural divergence only — no cost claim, no proof of
-   savings, no formal audit behind the privacy properties).
-2. **Runs are one at a time, on one machine, sequentially.** The run-isolation guard
-   (`ARCHITECTURE.md`) rejects overlapping runs that share node instances — it refuses
-   the unsafe case, it does not make concurrent runs against shared state safe. Don't try
-   to parallelize a pilot across the same graph/node instances.
-3. **Findings are reported as what they are.** Nothing produced today clears the
-   "measured" confidence tier (see the diagram above) — present results to the workload
-   owner as structural findings, not as a savings number, until there's a `verification`
-   row to back one.
-
 ## Project layout
 
 ```
@@ -164,6 +139,31 @@ mypy
 ```
 
 No external dependencies at runtime — deliberately. See `CLAUDE.md` rule 9.
+
+## Running this against a real workload
+
+The kill gate in `docs/PHASES.md` (5 real workloads, ≥25% recoverable cost) is the
+evidence this whole idea stands or falls on — it has to come from somewhere, and that
+somewhere is a controlled pilot, not a precondition that has to be satisfied before any
+pilot can happen. This section defines what "authorized" means for that pilot; it is not
+an invitation to run this against arbitrary customer data without one.
+
+SixEyes has no network access and no way to reach a provider account or live production
+traffic — it only ever reads a JSONL file someone hands it. That narrows the risk but
+does not remove the judgment call. A run against real data is authorized only when:
+
+1. **The workload owner explicitly consents** to exporting that specific data for this
+   specific purpose, having read this README and `CLAUDE.md` and understood the actual
+   scope of what's guaranteed (structural divergence only — no cost claim, no proof of
+   savings, no formal audit behind the privacy properties).
+2. **Runs are one at a time, on one machine, sequentially.** The run-isolation guard
+   (`ARCHITECTURE.md`) rejects overlapping runs that share node instances — it refuses
+   the unsafe case, it does not make concurrent runs against shared state safe. Don't try
+   to parallelize a pilot across the same graph/node instances.
+3. **Findings are reported as what they are.** Nothing produced today clears the
+   "measured" confidence tier (see the diagram above) — present results to the workload
+   owner as structural findings, not as a savings number, until there's a `verification`
+   row to back one.
 
 ## Naming
 
