@@ -11,6 +11,9 @@ stays disabled until task, model, call-limit, and spending controls are approved
 
 from __future__ import annotations
 
+import gc
+import importlib
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -32,9 +35,10 @@ from pilots.agentfuse.fake_client import (
     ScriptedClient,
 )
 from sixeyes.fingerprint.divergence import Divergence, compare
-from sixeyes.fingerprint.fingerprint import Fingerprint
+from sixeyes.fingerprint.fingerprint import Fingerprint, fingerprint_request
 from sixeyes.fingerprint.types import DivergenceKind
 from sixeyes.graph import DiskCache, Executor, Graph
+from sixeyes.ingest.types import RawRequest, RawTrace
 
 TEST_KEY = b"\x09" * 32
 TOOLS = [
@@ -229,7 +233,7 @@ async def test_tool_with_unsupported_type_is_rejected_not_silently_dropped() -> 
         messages=[{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
         tools=[{"type": "code_interpreter", "function": {"name": "x"}}],
     )
-    with pytest.raises(AgentFuseShapeError, match="unsupported tool type"):
+    with pytest.raises(AgentFuseShapeError, match=r"tool 0\.type"):
         convert_captured_calls(client.captured, workload_id="wl")
 
 
