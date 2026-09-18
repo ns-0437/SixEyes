@@ -3,7 +3,7 @@
 One phase at a time. A phase is done when its tests pass and its exit criterion is met.
 No starting phase N+1 with phase N red.
 
-## Current execution checkpoint — 2026-09-17
+## Current execution checkpoint — 2026-09-18
 
 **2026-09-18 update:** the founder authorized a public-source AgentFuse task, a maximum
 of 10 inference calls, and ultimately a $0 budget (overriding an earlier $1 ceiling).
@@ -13,6 +13,18 @@ ledger, and its tools read only the pinned public Git tree. The model runs outsi
 SixEyes detection, which remains deterministic. See `LOCAL_PILOT.md` for execution,
 limits and results. This remains one engineering validation experiment, not customer
 savings evidence or completion of the five-workload kill gate.
+
+**Observed local run:** 3 real inference calls, one search and one read, adapter complete,
+two consecutive comparisons both `none`, $0 provider charge. No actionable divergence
+was found. The selected report is in `results/local-pilot-2026-09-18.json`; answer quality
+was not independently verified and this does not demonstrate paid-provider cache hits.
+
+**CI regression:** GitHub run 35302732650 passed both Linux jobs and Windows 3.12 but
+reproduced a Windows 3.11 PermissionError reading a concurrently installed key. Key reads
+now retry transient denial within a 0.5-second window and propagate persistent denial,
+never interpreting it as absence. Deterministic tests cover transient denial, corrupt
+keys after denial, and persistent denial without regeneration. Local suite: 217 passing,
+strict mypy clean. Remote verification must be checked separately after this fix.
 
 The offline AgentFuse pilot now accepts the real adapter's tool-use requests rather
 than only proving their rejection. `RawToolChoice` preserves supported explicit choices;
@@ -34,9 +46,10 @@ shapes, report privacy and outbound-connection rejection. CI is configured for P
 3.11/3.12 on Windows/Linux with the AgentFuse revision pinned in requirements-pilot.txt.
 Local verification and remote CI results must be reported separately.
 
-**Next:** obtain the owner's task/data scope and execution budget; run one controlled
-session locally; ask whether its structural observation is new, actionable and worth
-paying to investigate. Any applied fix needs separate quality and observed-usage checks.
+**Next:** the authorized local session is complete, with no actionable observation.
+Seek an owner-approved workload with a concrete suspected prefix instability and evaluate
+whether the report adds something their existing tools missed. Do not spend remaining
+calls merely to increase a run count. Any applied fix needs separate quality and observed-usage checks.
 Synthetic fixtures are not one of the five real workloads and provide no savings claim.
 Do not start Phase 4 economics or expand infrastructure on this evidence alone.
 

@@ -14,6 +14,63 @@ from typing import Any
 import pytest
 
 from sixeyes.fingerprint.keys import KEY_LENGTH, load_or_create_key
+from sixeyes.fingerprint import keys
+
+
+@pytest.mark.parametrize("stored", [b"k" * KEY_LENGTH, b"corrupt"])
+def test_transient_read_denial_preserves_existing_key(
+    tmp_path: Path, monkeypatch: Any, stored: bytes,
+) -> None:
+    path = tmp_path / "fingerprint.key"
+    path.write_bytes(stored)
+    original_read = Path.read_bytes
+    attempts = 0
+
+    def read(candidate: Path) -> bytes:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 2:
+            raise PermissionError("simulated sharing violation")
+        return original_read(candidate)
+
+    def no_generation(_: int) -> bytes:
+        pytest.fail("An existing inaccessible key must never be regenerated")
+
+    monkeypatch.setattr(Path, "read_bytes", read)
+    monkeypatch.setattr(keys.secrets, "token_bytes", no_generation)
+    monkeypatch.setattr(keys.time, "sleep", lambda _: None)
+    if len(stored) == KEY_LENGTH:
+        assert load_or_create_key(path) == stored
+    else:
+        with pytest.raises(ValueError, match="refusing to silently regenerate"):
+            load_or_create_key(path)
+    assert attempts == 3
+    assert original_read(path) == stored
+
+
+def test_persistent_read_denial_is_bounded_and_never_regenerates(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    path = tmp_path / "fingerprint.key"
+    stored = b"k" * KEY_LENGTH
+    path.write_bytes(stored)
+    original_read = Path.read_bytes
+    clock = iter([0.0, 0.1, 0.6])
+    attempts = 0
+
+    def denied(_: Path) -> bytes:
+        nonlocal attempts
+        attempts += 1
+        raise PermissionError("persistent denial")
+
+    monkeypatch.setattr(Path, "read_bytes", denied)
+    monkeypatch.setattr(keys.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(keys.time, "sleep", lambda _: None)
+    with pytest.raises(PermissionError, match="persistent denial"):
+        load_or_create_key(path)
+    assert attempts == 2
+    assert original_read(path) == stored
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def test_creates_a_key_on_first_use(tmp_path: Path) -> None:

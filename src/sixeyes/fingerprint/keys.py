@@ -30,6 +30,7 @@ DEFAULT_KEY_PATH = Path.home() / ".sixeyes" / "fingerprint.key"
 _LOCK_SUFFIX = ".lock"
 _LOCK_WAIT_SECONDS = 5.0
 _LOCK_POLL_INTERVAL = 0.02
+_READ_WAIT_SECONDS = 0.5
 
 
 class KeyCreationTimeoutError(TimeoutError):
@@ -41,10 +42,19 @@ def _read_existing(path: Path) -> bytes | None:
     check -- collapsing "check" and "read" into one filesystem call avoids a TOCTOU window
     of its own between the two, and matters for load_or_create_key's retry loop below,
     which calls this repeatedly while waiting on another caller's in-progress creation."""
-    try:
-        data = path.read_bytes()
-    except FileNotFoundError:
-        return None
+    deadline = time.monotonic() + _READ_WAIT_SECONDS
+    while True:
+        try:
+            data = path.read_bytes()
+            break
+        except FileNotFoundError:
+            return None
+        except PermissionError:
+            # Windows can briefly deny reads during atomic installation. An unreadable
+            # key is never treated as absent: persistent denial must propagate.
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(_LOCK_POLL_INTERVAL)
     if len(data) != KEY_LENGTH:
         raise ValueError(
             f"fingerprint key at {path} is {len(data)} bytes, expected {KEY_LENGTH} -- "

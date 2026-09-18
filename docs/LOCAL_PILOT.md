@@ -69,5 +69,20 @@ or single-request trace provides no consecutive-pair evidence and is reported as
 
 ## Execution record
 
-Prepared and tested offline on 2026-09-18. The actual model run is pending download and
-checksum verification; no inference result is claimed in this checkpoint.
+Completed on 2026-09-18 after model/archive checksum verification. See the
+[selected machine-readable report](results/local-pilot-2026-09-18.json).
+
+- 3 inference attempts, all successfully captured; 7 of the session's 10 calls unused.
+- 1 search and 1 read, zero rejected tools; adapter completed with finish reason `stop`.
+- 3 requests yielded 2 consecutive comparisons, both `none` (zero changed pairs).
+- $0 provider charge. CPU time, electricity and download bandwidth were still consumed.
+- Answer quality was not independently verified; no raw answer or request was retained.
+
+An initial launcher attempt failed before inference because the sandbox-owned Git clone
+was not trusted by the host account. A process-scoped safe.directory exception for that
+specific clone resolved it; it consumed no inference call. The same counts-only ledger
+was used throughout. The owned server stopped after execution.
+
+This is evidence that real local tool-use requests survive the capture/fingerprint/report
+path. It found no actionable divergence and provides no savings, provider-cache or
+willingness-to-pay evidence. Do not count it as passing the business kill gate.

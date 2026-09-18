@@ -11,11 +11,12 @@ requests. Recoverable-spend attribution and verified remediation are goals, not 
 capabilities. Opening experiment: prompt-cache diagnostics that help an owner identify
 and evaluate a useful fix without modifying production requests.
 
-**Current milestone (2026-09-17):** runnable offline AgentFuse pilot, using the actual
-pinned adapter with a fake client. Run `python -m pilots.agentfuse --scenario restart`
-after the setup in `docs/PILOT.md`. It emits a structural report, not a cost finding.
-The next evidence needed is an explicitly authorized workload and an owner-assessed
-actionable observation. Phase 3 detectors and the 5-workload kill gate remain unfinished.
+**Current milestone (2026-09-18):** completed the authorized public-source AgentFuse
+pilot with a real local Qwen3-1.7B model: 3 calls, one search, one read, $0 provider spend.
+Both consecutive comparisons reported no structural divergence. See `docs/LOCAL_PILOT.md`
+for the selected report and limits. The next evidence needed is an owner-assessed
+actionable observation; this run found none. Phase 3 detectors and the 5-workload kill
+gate remain unfinished. The scripted offline demo remains in `docs/PILOT.md`.
 
 **Competitive reality, checked 2026-09-16:** Anthropic ships a native `cache-diagnosis` beta
 API that fingerprints consecutive requests and reports the exact divergence point
@@ -272,6 +273,8 @@ See `ARCHITECTURE.md` for the node graph and `docs/PHASES.md` for the build plan
   version 4 reports `tool_choice_changed`. Check order is model, tool choice, then
   tools/system/messages. No provider cache effect or token offset is inferred for a
   tool-choice change. Omitted choice remains distinct from an explicit default.
+  `keys.py` retries transient key-read PermissionError for at most a 0.5-second retry
+  window; persistent denial propagates and must never be treated as a missing key.
 - `src/sixeyes/graph/`: typed execution, cache boundaries, run-scoped preparation and
   rejection of overlapping shared nodes. Do not bypass it in a pilot.
 - `pilots/agentfuse/bridge.py`: strict captured-call conversion and a source bound to

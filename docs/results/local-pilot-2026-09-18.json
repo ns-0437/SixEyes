@@ -1,0 +1,49 @@
+{
+  "mode": "real_local_inference_public_source",
+  "model": "Qwen/Qwen3-1.7B-GGUF Q8_0",
+  "model_revision": "90862c4b9d2787eaed51d12237eafdfe7c5f6077",
+  "runtime": "llama.cpp b10964 CPU",
+  "source_revision": "9aa96de5d0a9e5a4a5ad65cc42f8b1397fe8813d",
+  "provider_charge_usd": "0.00",
+  "session_call_limit": 10,
+  "session_attempted_calls": 3,
+  "run_attempted_calls": 3,
+  "successful_captured_calls": 3,
+  "search_count": 1,
+  "read_count": 1,
+  "rejected_tool_count": 0,
+  "adapter_status": "complete",
+  "finish_reason": "stop",
+  "answer_mentions_target": true,
+  "answer_quality_verified": false,
+  "failure": null,
+  "structural_report": {
+    "schema_version": 1,
+    "scope": "structural_comparison_only",
+    "request_count": 3,
+    "comparison_count": 2,
+    "changed_pair_count": 0,
+    "comparisons": [
+      {
+        "previous_request_number": 1,
+        "request_number": 2,
+        "change": "none",
+        "segment_unit_offset": null,
+        "next_check": "No structural change detected; verify actual provider cache usage separately."
+      },
+      {
+        "previous_request_number": 2,
+        "request_number": 3,
+        "change": "none",
+        "segment_unit_offset": null,
+        "next_check": "No structural change detected; verify actual provider cache usage separately."
+      }
+    ],
+    "limitations": [
+      "No observed cache hits, measured savings, or redundant-tool-call diagnosis.",
+      "Offsets are structural units, not provider tokens or exact nested fields.",
+      "Compare requests within one logical session only; intentional restarts may be flagged."
+    ]
+  },
+  "evidence_limit": "Local plumbing validation only; no paid-provider cache-hit, savings or demand evidence."
+}
