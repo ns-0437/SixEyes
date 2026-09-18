@@ -297,3 +297,27 @@ See `ARCHITECTURE.md` for the node graph and `docs/PHASES.md` for the build plan
 
 Keep this map and `docs/PHASES.md` current in each capability-changing commit. Prioritize
 the smallest owner-usable experiment over more adapters, infrastructure or review counts.
+
+## Authorized local experiment — 2026-09-18
+
+The founder authorized a read-only public AgentFuse source task and at most 10 inference
+calls, then explicitly required **zero spend**. That supersedes the earlier $1 allowance.
+Do not use paid APIs, free-trial credits, billing credentials or a remote fallback.
+
+- `pilots/agentfuse/capture.py`: shared transient snapshots for scripted and actual local
+  responses; fake-client aliases preserve existing fixture imports. Never persist them.
+- `local_client.py`: literal-loopback HTTP client, no credentials/proxies/redirects/retries.
+  `CallBudget` reserves before each attempted POST, including failures, in a counts-only
+  ledger. Reuse the same ledger for the entire session; never reset it to get more calls.
+- `repo_tools.py`: search/read of regular Python blobs under `agentfuse/` at the pinned
+  public Git revision. No working-tree reads, shell tools, symlink traversal or writes.
+- `local_runtime.py`: checksum-pinned Windows CPU executable/model, hidden process,
+  loopback-only listener, offline mode, bounded context/output, disabled logs, cleanup.
+- `local_run.py`: actual AgentFuse adapter and real deterministic monitor, no trace files,
+  selected structural report only. Model inference generates the workload; it never
+  decides whether the trace is waste. This is not an additional detection node.
+
+The first task is to locate and describe CircuitBreakerMonitor using search_files and
+read_file. Local inference can validate the capture path, not paid-provider cache hits,
+dollar savings, quality preservation or willingness to pay. Record an unsuccessful run
+honestly. An adapter's `complete` status and a target-name mention are not a quality eval.

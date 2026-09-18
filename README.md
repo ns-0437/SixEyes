@@ -164,6 +164,9 @@ stay in memory; only selected structural report fields are printed. No paid API 
 credentials are involved. These examples establish offline behavior, not customer savings.
 See [the pilot guide](docs/PILOT.md) for the supported subset, checks and next experiment.
 
+For the owner-authorized, zero-spend experiment using a real local open-weight model
+and read-only public source tools, see [the local pilot guide](docs/LOCAL_PILOT.md).
+
 ## Running this against a real workload
 
 The kill gate in `docs/PHASES.md` (5 real workloads, ≥25% recoverable cost) is the

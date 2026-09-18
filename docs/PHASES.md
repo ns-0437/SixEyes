@@ -5,6 +5,15 @@ No starting phase N+1 with phase N red.
 
 ## Current execution checkpoint — 2026-09-17
 
+**2026-09-18 update:** the founder authorized a public-source AgentFuse task, a maximum
+of 10 inference calls, and ultimately a $0 budget (overriding an earlier $1 ceiling).
+The local pilot uses Qwen3-1.7B Q8_0 and a pinned llama.cpp CPU build. Its transport
+has no paid endpoint or fallback, reserves calls before POST in a persistent counts-only
+ledger, and its tools read only the pinned public Git tree. The model runs outside
+SixEyes detection, which remains deterministic. See `LOCAL_PILOT.md` for execution,
+limits and results. This remains one engineering validation experiment, not customer
+savings evidence or completion of the five-workload kill gate.
+
 The offline AgentFuse pilot now accepts the real adapter's tool-use requests rather
 than only proving their rejection. `RawToolChoice` preserves supported explicit choices;
 Fingerprint v7 HMACs them separately and Divergence v4 reports control changes without
