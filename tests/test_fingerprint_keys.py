@@ -129,3 +129,41 @@ def test_concurrent_first_use_does_not_deadlock_when_run_many_times(tmp_path: Pa
         with ThreadPoolExecutor(max_workers=4) as pool:
             results = list(pool.map(lambda _: load_or_create_key(path), range(4)))
         assert len(set(results)) == 1
+
+
+def test_permission_error_on_lock_is_retried_when_treated_as_contention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows raises PermissionError while another caller is deleting the lock file. That is
+    contention and must be retried, not crash the caller."""
+    real_open = keys.os.open
+    calls = {"n": 0}
+
+    def flaky_open(path: Any, flags: int, mode: int = 0o777) -> int:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError(13, "Permission denied")
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(keys, "_LOCK_CONTENTION_ERRORS", (FileExistsError, PermissionError))
+    monkeypatch.setattr(keys.os, "open", flaky_open)
+
+    key = load_or_create_key(tmp_path / "fingerprint.key")
+
+    assert len(key) == KEY_LENGTH
+    assert calls["n"] == 2
+
+
+def test_permission_error_on_lock_propagates_when_not_contention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Off Windows a PermissionError is a real problem and must surface immediately."""
+
+    def denied_open(path: Any, flags: int, mode: int = 0o777) -> int:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(keys, "_LOCK_CONTENTION_ERRORS", (FileExistsError,))
+    monkeypatch.setattr(keys.os, "open", denied_open)
+
+    with pytest.raises(PermissionError):
+        load_or_create_key(tmp_path / "fingerprint.key")

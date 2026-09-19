@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import sys
 import time
 from pathlib import Path
 
@@ -30,6 +31,14 @@ DEFAULT_KEY_PATH = Path.home() / ".sixeyes" / "fingerprint.key"
 _LOCK_SUFFIX = ".lock"
 _LOCK_WAIT_SECONDS = 5.0
 _LOCK_POLL_INTERVAL = 0.02
+
+# On Windows, os.open(O_CREAT|O_EXCL) on a lock file that another caller is deleting at that
+# moment raises PermissionError (the file is delete-pending), not FileExistsError. It is lock
+# contention there. On other platforms PermissionError means a real permission problem and must
+# propagate rather than be retried until the timeout.
+_LOCK_CONTENTION_ERRORS: tuple[type[OSError], ...] = (
+    (FileExistsError, PermissionError) if sys.platform == "win32" else (FileExistsError,)
+)
 _READ_WAIT_SECONDS = 0.5
 
 
@@ -89,7 +98,7 @@ def load_or_create_key(path: Path = DEFAULT_KEY_PATH) -> bytes:
     while True:
         try:
             lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
+        except _LOCK_CONTENTION_ERRORS:
             # Someone else is creating the key right now -- wait for them to finish and
             # install it, rather than racing to create our own.
             existing = _read_existing(path)
