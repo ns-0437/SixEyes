@@ -105,3 +105,10 @@ def test_malformed_timestamp_error_does_not_echo_the_raw_value() -> None:
     assert excinfo.value.__cause__ is None  # `from None` -- no chained exception carries it either
     assert "timestamp" in str(excinfo.value)
     assert excinfo.value.line_no == 3
+
+
+def test_utf8_bom_at_the_start_of_the_file_is_accepted() -> None:
+    """Windows tools write a BOM; the file is otherwise valid JSONL."""
+    trace = parse_jsonl("﻿" + _line() + "
+" + _line(request_id="req_2"), workload_id="w")
+    assert [r.request_id for r in trace.requests] == ["req_1", "req_2"]

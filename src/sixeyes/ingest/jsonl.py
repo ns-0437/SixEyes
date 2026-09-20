@@ -165,6 +165,10 @@ def parse_line(line: str, line_no: int) -> RawRequest:
 
 def parse_jsonl(text: str, workload_id: str) -> RawTrace:
     """Parse JSONL content (already read into memory) into a RawTrace, in line order."""
+    # A UTF-8 byte-order mark (PowerShell's Out-File, Excel, several Windows exporters) is not
+    # whitespace, so strip() left it in front of line 1 and json.loads rejected an otherwise
+    # valid export with "Unexpected UTF-8 BOM".
+    text = text.removeprefix("﻿")
     requests = []
     for line_no, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
