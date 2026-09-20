@@ -173,3 +173,27 @@ def test_non_list_fields_are_a_format_error_with_a_line_number(
         parse_line(_line(**overrides), line_no=7)
     assert excinfo.value.line_no == 7
     assert field in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "overrides, what",
+    [
+        ({"usage": [1, 2]}, "usage"),
+        ({"messages": ["hello"]}, "message"),
+        ({"tools": ["search"]}, "tool"),
+        ({"messages": [{"role": "assistant", "tool_calls": [5]}]}, "tool call"),
+    ],
+)
+def test_non_object_items_are_a_format_error_not_an_attribute_error(
+    overrides: dict[str, object], what: str
+) -> None:
+    with pytest.raises(JsonlFormatError) as excinfo:
+        parse_line(_line(**overrides), line_no=4)
+    assert excinfo.value.line_no == 4
+    assert what in str(excinfo.value)
+    assert "must be an object" in str(excinfo.value)
+
+
+def test_null_or_empty_usage_is_still_accepted() -> None:
+    assert parse_line(_line(usage=None), line_no=1).usage_input_tokens is None
+    assert parse_line(_line(usage={}), line_no=1).usage_input_tokens is None

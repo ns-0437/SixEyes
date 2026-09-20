@@ -106,7 +106,18 @@ def _as_list(value: Any, field: str, line_no: int, *, nullable: bool) -> list[An
     return value
 
 
-def _parse_tool_call(raw: dict[str, Any], line_no: int) -> RawToolCall:
+def _as_object(value: Any, what: str, line_no: int) -> dict[str, Any]:
+    """A JSON object, or a format error naming what was expected. Without this a list, string or
+    number where an object belongs surfaced as AttributeError from `.get`, with no line number."""
+    if not isinstance(value, dict):
+        raise JsonlFormatError(
+            line_no, f"{what} must be an object (got type {type(value).__name__})"
+        )
+    return value
+
+
+def _parse_tool_call(raw: Any, line_no: int) -> RawToolCall:
+    raw = _as_object(raw, "tool call", line_no)
     arguments = raw.get("arguments", "")
     # Explicit rejection, not silent coercion: str(arguments) on a dict would produce
     # Python's repr-ish formatting (single-quoted keys, no real JSON guarantee), which is
@@ -124,7 +135,8 @@ def _parse_tool_call(raw: dict[str, Any], line_no: int) -> RawToolCall:
     )
 
 
-def _parse_message(raw: dict[str, Any], line_no: int) -> RawMessage:
+def _parse_message(raw: Any, line_no: int) -> RawMessage:
+    raw = _as_object(raw, "message", line_no)
     role = _require(raw, "role", line_no)
     if role not in ("system", "user", "assistant", "tool"):
         raise JsonlFormatError(line_no, f"unknown message role {role!r}")
@@ -144,7 +156,8 @@ def _parse_message(raw: dict[str, Any], line_no: int) -> RawMessage:
     )
 
 
-def _parse_tool(raw: dict[str, Any], line_no: int) -> RawToolDef:
+def _parse_tool(raw: Any, line_no: int) -> RawToolDef:
+    raw = _as_object(raw, "tool", line_no)
     return RawToolDef(
         name=str(_require(raw, "name", line_no)),
         description=str(raw.get("description", "")),
@@ -160,7 +173,7 @@ def parse_line(line: str, line_no: int) -> RawRequest:
     if not isinstance(obj, dict):
         raise JsonlFormatError(line_no, "each line must be a JSON object")
 
-    usage = obj.get("usage", {}) or {}
+    usage = _as_object(obj.get("usage") or {}, "usage", line_no)
     try:
         tool_choice = parse_tool_choice(obj["tool_choice"]) if "tool_choice" in obj else None
     except ValueError:
