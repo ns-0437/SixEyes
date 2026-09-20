@@ -93,6 +93,19 @@ def _require_float(obj: dict[str, Any], field: str, line_no: int) -> float:
         ) from None
 
 
+def _as_list(value: Any, field: str, line_no: int, *, nullable: bool) -> list[Any]:
+    """A field that must be a JSON array. `null` counts as absent where `nullable` (OpenAI-style
+    logs carry `"tool_calls": null` on plain assistant turns), and anything else that is not an
+    array is a format error with a line number rather than a TypeError from iterating it."""
+    if value is None and nullable:
+        return []
+    if not isinstance(value, list):
+        raise JsonlFormatError(
+            line_no, f"field {field!r} must be a list (got type {type(value).__name__})"
+        )
+    return value
+
+
 def _parse_tool_call(raw: dict[str, Any], line_no: int) -> RawToolCall:
     arguments = raw.get("arguments", "")
     # Explicit rejection, not silent coercion: str(arguments) on a dict would produce
@@ -124,7 +137,10 @@ def _parse_message(raw: dict[str, Any], line_no: int) -> RawMessage:
         role=role,
         content="" if content is None else str(content),
         tool_call_id=raw.get("tool_call_id"),
-        tool_calls=tuple(_parse_tool_call(c, line_no) for c in raw.get("tool_calls", [])),
+        tool_calls=tuple(
+            _parse_tool_call(c, line_no)
+            for c in _as_list(raw.get("tool_calls"), "tool_calls", line_no, nullable=True)
+        ),
     )
 
 
@@ -154,8 +170,14 @@ def parse_line(line: str, line_no: int) -> RawRequest:
         timestamp=_require_float(obj, "timestamp", line_no),
         model=str(_require(obj, "model", line_no)),
         system=obj.get("system"),
-        tools=tuple(_parse_tool(t, line_no) for t in obj.get("tools", [])),
-        messages=tuple(_parse_message(m, line_no) for m in _require(obj, "messages", line_no)),
+        tools=tuple(
+            _parse_tool(t, line_no)
+            for t in _as_list(obj.get("tools"), "tools", line_no, nullable=True)
+        ),
+        messages=tuple(
+            _parse_message(m, line_no)
+            for m in _as_list(_require(obj, "messages", line_no), "messages", line_no, nullable=False)
+        ),
         usage_input_tokens=usage.get("input_tokens"),
         usage_output_tokens=usage.get("output_tokens"),
         usage_cache_read_tokens=usage.get("cache_read_input_tokens"),

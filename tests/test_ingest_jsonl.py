@@ -141,3 +141,35 @@ def test_crlf_line_endings_and_line_numbers_still_work() -> None:
     with pytest.raises(JsonlFormatError) as excinfo:
         parse_jsonl(text, workload_id="w")
     assert excinfo.value.line_no == 3
+
+
+def test_null_tool_calls_and_tools_are_treated_as_absent() -> None:
+    """OpenAI-style logs write `"tool_calls": null` on ordinary assistant turns; that used to
+    raise TypeError from iterating None."""
+    req = parse_line(
+        _line(
+            tools=None,
+            messages=[{"role": "assistant", "content": "hi", "tool_calls": None}],
+        ),
+        line_no=1,
+    )
+    assert req.tools == ()
+    assert req.messages[0].tool_calls == ()
+
+
+@pytest.mark.parametrize(
+    "overrides, field",
+    [
+        ({"messages": None}, "messages"),
+        ({"messages": "hi"}, "messages"),
+        ({"tools": {"name": "x"}}, "tools"),
+        ({"messages": [{"role": "assistant", "tool_calls": "call_1"}]}, "tool_calls"),
+    ],
+)
+def test_non_list_fields_are_a_format_error_with_a_line_number(
+    overrides: dict[str, object], field: str
+) -> None:
+    with pytest.raises(JsonlFormatError) as excinfo:
+        parse_line(_line(**overrides), line_no=7)
+    assert excinfo.value.line_no == 7
+    assert field in str(excinfo.value)
