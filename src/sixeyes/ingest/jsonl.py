@@ -170,7 +170,11 @@ def parse_jsonl(text: str, workload_id: str) -> RawTrace:
     # valid export with "Unexpected UTF-8 BOM".
     text = text.removeprefix("\ufeff")
     requests = []
-    for line_no, line in enumerate(text.splitlines(), start=1):
+    # Split on newline only. str.splitlines() also breaks on U+2028, U+2029 and U+0085, which JSON
+    # allows unescaped inside a string (json.dumps(..., ensure_ascii=False) emits them), so a valid
+    # line whose content held one was cut in half and rejected as invalid JSON. A trailing carriage
+    # return from CRLF files is removed by strip() below.
+    for line_no, line in enumerate(text.split("\n"), start=1):
         stripped = line.strip()
         if not stripped:
             continue

@@ -112,3 +112,32 @@ def test_utf8_bom_at_the_start_of_the_file_is_accepted() -> None:
     bom, nl = chr(0xFEFF), chr(10)
     trace = parse_jsonl(bom + _line() + nl + _line(request_id="req_2"), workload_id="w")
     assert [r.request_id for r in trace.requests] == ["req_1", "req_2"]
+
+
+def test_line_separator_characters_inside_content_do_not_split_a_line() -> None:
+    """U+2028, U+2029 and U+0085 are legal unescaped in a JSON string and were treated as line
+    breaks by str.splitlines(), so a valid export failed with 'Unterminated string'."""
+    import json
+
+    content = "a" + chr(0x2028) + "b" + chr(0x2029) + "c" + chr(0x85) + "d"
+    line = json.dumps(
+        {
+            "request_id": "req_1",
+            "timestamp": 1.0,
+            "model": "m",
+            "messages": [{"role": "user", "content": content}],
+        },
+        ensure_ascii=False,
+    )
+    trace = parse_jsonl(line + chr(10) + _line(request_id="req_2"), workload_id="w")
+    assert [r.request_id for r in trace.requests] == ["req_1", "req_2"]
+    assert trace.requests[0].messages[0].content == content
+
+
+def test_crlf_line_endings_and_line_numbers_still_work() -> None:
+    crlf = chr(13) + chr(10)
+    bad = "not json"
+    text = _line() + crlf + crlf + bad
+    with pytest.raises(JsonlFormatError) as excinfo:
+        parse_jsonl(text, workload_id="w")
+    assert excinfo.value.line_no == 3
