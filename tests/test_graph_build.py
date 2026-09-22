@@ -65,6 +65,43 @@ def test_type_mismatch_is_rejected_with_both_type_names() -> None:
     assert "int" in message and "str" in message and "'d'" in message
 
 
+def test_newtype_port_rejects_its_real_wrong_type() -> None:
+    """`Digest = NewType('Digest', str)` (sixeyes.core.ids) is not itself a `type` --
+    `isinstance(Digest, type)` is False -- so it used to fall through the permissive
+    "can't check this, allow it" path meant for real generics, and an `int`-producing
+    node wired into a `Digest`-typed port passed validate() with no error. Reproduced
+    directly before the fix: this test raised nothing instead of PortTypeError."""
+    from sixeyes.core.ids import Digest
+
+    @node(output=str, inputs={"d": Digest})
+    async def consume_digest(ctx: Any, d: Digest) -> str:
+        return str(d)
+
+    graph = Graph("newtype-mismatch")
+    graph.add(Const("src", value=1))  # output=int
+    graph.add(consume_digest("c"), d="src")
+
+    with pytest.raises(PortTypeError) as excinfo:
+        graph.validate()
+    assert "int" in str(excinfo.value)
+
+
+def test_newtype_port_accepts_its_real_underlying_type() -> None:
+    """The fix must unwrap NewType to its supertype and still check it, not just reject
+    everything: a `str` producer is a genuinely valid `Digest` (str) producer."""
+    from sixeyes.core.ids import Digest
+
+    @node(output=str, inputs={"d": Digest})
+    async def consume_digest(ctx: Any, d: Digest) -> str:
+        return str(d)
+
+    graph = Graph("newtype-match")
+    graph.add(Const("src", value=1))
+    graph.add(stringify("s"), x="src")  # output=str
+    graph.add(consume_digest("c"), d="s")
+    graph.validate()  # must not raise
+
+
 def test_unknown_port_is_rejected() -> None:
     graph = Graph("bad-port")
     graph.add(Const("src", value=1))

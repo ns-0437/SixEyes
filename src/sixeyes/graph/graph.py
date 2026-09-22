@@ -21,15 +21,34 @@ from sixeyes.core.ids import Digest, content_hash
 from sixeyes.graph.node import Node, NodeKind
 
 
+def _unwrap_newtype(t: Any) -> Any:
+    """`NewType('Digest', str)` is not itself a `type` -- `isinstance(Digest, type)` is False
+    -- so it used to fall through the `isinstance(..., type)` guard below and be silently
+    accepted as compatible with *anything*, the same permissive path meant only for real
+    generics (`list[int]`, unions). Reproduced directly: wiring an `int`-producing node into
+    a port declared `Digest` passed `graph.validate()` with no error, in a module whose
+    entire stated purpose is catching exactly this at build time. `__supertype__` is a
+    NewType's one public, documented way to recover the real class it wraps (`str` here);
+    unwrap it before falling back to the permissive default so a NewType port is checked
+    against its actual runtime type, same as a concrete class.
+    """
+    supertype = getattr(t, "__supertype__", None)
+    return supertype if isinstance(supertype, type) else t
+
+
 def _types_compatible(produced: Any, expected: Any) -> bool:
     """Conservative structural check.
 
-    Concrete classes are checked with issubclass. Anything typing-generic (list[int],
-    Protocol, unions) is accepted: a partial check that catches the common wiring mistake
-    beats a strict one that forces node authors to fight the annotation system.
+    Concrete classes (including NewTypes, unwrapped to their real supertype -- see
+    `_unwrap_newtype`) are checked with issubclass. Anything else typing-generic
+    (list[int], Protocol, unions) is accepted: a partial check that catches the common
+    wiring mistake beats a strict one that forces node authors to fight the annotation
+    system.
     """
     if expected is Any or expected is object:
         return True
+    produced = _unwrap_newtype(produced)
+    expected = _unwrap_newtype(expected)
     if not isinstance(produced, type) or not isinstance(expected, type):
         return True
     return issubclass(produced, expected)
