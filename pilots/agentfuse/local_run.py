@@ -1,4 +1,4 @@
-"""Owner-authorized $0 inference pilot. Start the pinned llama.cpp server separately."""
+"""Owner-authorized $0 inference pilot with an owned, checksum-pinned local server."""
 
 from __future__ import annotations
 
@@ -79,11 +79,19 @@ def main() -> int:
     parser.add_argument("--ledger", type=Path, required=True)
     parser.add_argument("--server-exe", type=Path, required=True)
     parser.add_argument("--model-file", type=Path, required=True)
+    parser.add_argument("--device", help="Explicit Vulkan identifier from llama-server --list-devices; default CPU")
     args = parser.parse_args()
-    with local_server(args.server_exe, args.model_file, args.port):
+    with local_server(args.server_exe, args.model_file, args.port, args.device):
         result = asyncio.run(run(args.repo, args.port, args.ledger))
+    if args.device is not None:
+        result["runtime"] = "llama.cpp b10964 Vulkan"
+        result["requested_device"] = args.device
     print(json.dumps(result, indent=2))
-    return 0 if result["failure"] is None and result["successful_captured_calls"] >= 2 else 1
+    return 0 if (
+        result["failure"] is None
+        and result["successful_captured_calls"] >= 2
+        and result["adapter_status"] == "complete"
+    ) else 1
 
 
 if __name__ == "__main__":

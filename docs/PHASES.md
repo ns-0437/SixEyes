@@ -5,6 +5,14 @@ No starting phase N+1 with phase N red.
 
 ## Current execution checkpoint — 2026-09-18
 
+**2026-09-27 GPU follow-up:** the owner enabled the laptop GPU. A verified Vulkan
+runtime used its RTX 3050 (4 GB). Seven additional calls exhausted the original ten-call
+ledger: one search, six reads, adapter `max_turns`, no final answer. Six comparisons
+reported `none`. This validates GPU transport/capture, not task quality or waste detection.
+The previous key-race fix passed all four GitHub CI jobs (run 35303310056).
+Current local checks after integrating upstream: 236 tests and strict mypy pass. No further inference is authorized
+within this exhausted session. See `LOCAL_PILOT.md` for the selected GPU report.
+
 **2026-09-18 update:** the founder authorized a public-source AgentFuse task, a maximum
 of 10 inference calls, and ultimately a $0 budget (overriding an earlier $1 ceiling).
 The local pilot uses Qwen3-1.7B Q8_0 and a pinned llama.cpp CPU build. Its transport

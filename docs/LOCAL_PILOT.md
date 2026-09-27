@@ -57,6 +57,22 @@ and limited to 20 results; reads are limited to 100 lines and 6000 characters.
 
 ## Evidence boundary
 
+### Optional Windows Vulkan GPU backend
+
+Use the same b10964 release's `llama-b10964-bin-win-vulkan-x64.zip` (31,674,542 bytes).
+Archive SHA-256: `1ee3ad952f4ba71f438bd6d7bebef19e1c7af04adcaa35d08b4ddabb27d4c642`.
+Verify before extracting the complete archive into a separate trusted directory. The
+server executable hash matches the CPU build; `ggml-vulkan.dll` must additionally match
+`a2caa6ce515f60a2f60e758ad78b1e15d028512cc7e27d278f41e468b94100fe`.
+Run that executable with `--list-devices`, then point `--server-exe` at it and append
+`--device Vulkan1` (replace with the actual desired device identifier). Ordering can vary.
+The launcher requests 99 GPU layers; it does not certify that every layer fits in VRAM.
+Without `--device`, CPU execution is explicitly selected. No driver installation is needed
+on the tested machine. Reuse the original ledger, including across CPU/GPU changes.
+
+The CLI now returns a nonzero status for max-turns/incomplete outcomes, even when enough
+requests exist for a structural report. Completion still does not establish answer quality.
+
 This runs a real open-weight model and the actual AgentFuse adapter/monitor against
 public source. It is neither a scripted-response test nor a paying customer's workload.
 The model generates requests outside SixEyes; fingerprinting/comparison uses no model.
@@ -86,3 +102,22 @@ was used throughout. The owned server stopped after execution.
 This is evidence that real local tool-use requests survive the capture/fingerprint/report
 path. It found no actionable divergence and provides no savings, provider-cache or
 willingness-to-pay evidence. Do not count it as passing the business kill gate.
+
+### GPU follow-up — 2026-09-27
+
+[Selected GPU report](results/gpu-pilot-2026-09-27.json). NVIDIA RTX 3050 Laptop GPU,
+4096 MiB, driver 555.97; selected Vulkan1 after device enumeration. During execution,
+nvidia-smi listed the owned llama-server process and 2834 MiB total GPU memory in use
+(including other applications). No per-process memory or speedup claim is made.
+
+The run used the remaining 7 calls: 1 search, 6 reads, zero rejected tools, 7 captures
+and 6 comparisons all `none`. It ended at `max_turns`, still requesting a tool, with no
+final answer. It is an incomplete task, not a successful task-quality result. The initial
+runner exit code was zero because it only checked transport/comparison availability;
+that condition has now been corrected to require adapter completion as well.
+
+Provider charge remained $0. The same ledger now records 10/10 attempts; no more calls
+are permitted under this session. The owned server exited and no raw captures or answers
+were retained. Different behavior across the CPU and GPU runs does not establish its
+cause; a seed alone is not evidence of identical outputs across backends. Stable structural
+prefixes also do not establish useful progress, redundant-tool-call waste, or savings.

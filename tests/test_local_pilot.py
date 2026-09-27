@@ -11,7 +11,22 @@ import pytest
 
 from pilots.agentfuse.local_client import CallBudget, LocalClient, LocalPilotError
 from pilots.agentfuse.repo_tools import PublicRepoTools
-from pilots.agentfuse.local_runtime import verify_file
+from pilots.agentfuse.local_runtime import backend_args, verify_file
+
+
+def test_cpu_mode_disables_implicit_gpu_selection(tmp_path: Path) -> None:
+    assert backend_args(tmp_path / "llama-server.exe", None) == [
+        "--device", "none", "--n-gpu-layers", "0",
+    ]
+
+
+def test_vulkan_refuses_unverified_backend_and_invalid_device(tmp_path: Path) -> None:
+    executable = tmp_path / "llama-server.exe"
+    with pytest.raises(LocalPilotError, match="identifier"):
+        backend_args(executable, "auto")
+    (tmp_path / "ggml-vulkan.dll").write_bytes(b"untrusted backend")
+    with pytest.raises(LocalPilotError, match="checksum"):
+        backend_args(executable, "Vulkan1")
 
 
 def test_budget_survives_new_clients_and_rejects_eleventh_attempt(tmp_path: Path) -> None:

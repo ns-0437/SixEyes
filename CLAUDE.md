@@ -316,6 +316,9 @@ Do not use paid APIs, free-trial credits, billing credentials or a remote fallba
   public Git revision. No working-tree reads, shell tools, symlink traversal or writes.
 - `local_runtime.py`: checksum-pinned Windows CPU executable/model, hidden process,
   loopback-only listener, offline mode, bounded context/output, disabled logs, cleanup.
+  Optional `--device VulkanN` verifies the pinned Vulkan DLL and explicitly selects the
+  device. CPU default disables GPU offload. Select identifiers from `--list-devices`;
+  do not assume GPU ordering is stable. Download the complete verified runtime archive.
 - `local_run.py`: actual AgentFuse adapter and real deterministic monitor, no trace files,
   selected structural report only. Model inference generates the workload; it never
   decides whether the trace is waste. This is not an additional detection node.
@@ -324,3 +327,10 @@ The first task is to locate and describe CircuitBreakerMonitor using search_file
 read_file. Local inference can validate the capture path, not paid-provider cache hits,
 dollar savings, quality preservation or willingness to pay. Record an unsuccessful run
 honestly. An adapter's `complete` status and a target-name mention are not a quality eval.
+
+2026-09-27 GPU follow-up: RTX 3050 Laptop GPU (4 GB), Vulkan1 on this machine.
+Seven more calls produced one search and six reads but hit max_turns before a final
+answer. All six comparisons were `none`; stable structure does not establish task
+completion. The original ledger has consumed all 10 calls: no further inference under
+that authorization. CLI exit success now also requires adapter completion. See
+`docs/LOCAL_PILOT.md`; do not label this run a successful answer or savings finding.

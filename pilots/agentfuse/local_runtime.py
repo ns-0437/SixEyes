@@ -1,10 +1,11 @@
-"""Launch and stop the checksum-pinned CPU runtime; never use a remote model API."""
+"""Launch and stop a checksum-pinned local runtime; never use a remote model API."""
 
 from __future__ import annotations
 
 import hashlib
 import http.client
 import os
+import re
 import socket
 import subprocess
 import time
@@ -16,6 +17,16 @@ from pilots.agentfuse.local_client import LocalPilotError
 
 MODEL_SHA256 = "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a"
 SERVER_SHA256 = "aa2e1f5c67be55f11be26ae58d643a545ca07c6de498f6f870330ac2f4dfec73"
+VULKAN_SHA256 = "a2caa6ce515f60a2f60e758ad78b1e15d028512cc7e27d278f41e468b94100fe"
+
+
+def backend_args(executable: Path, device: str | None) -> list[str]:
+    if device is None:
+        return ["--device", "none", "--n-gpu-layers", "0"]
+    if re.fullmatch(r"Vulkan[0-9]+", device) is None:
+        raise LocalPilotError("Expected an explicit Vulkan device identifier")
+    verify_file(executable.parent / "ggml-vulkan.dll", VULKAN_SHA256)
+    return ["--device", device, "--n-gpu-layers", "99"]
 
 
 def verify_file(path: Path, expected: str) -> None:
@@ -26,7 +37,7 @@ def verify_file(path: Path, expected: str) -> None:
 
 
 @contextmanager
-def local_server(executable: Path, model: Path, port: int) -> Iterator[None]:
+def local_server(executable: Path, model: Path, port: int, device: str | None = None) -> Iterator[None]:
     """Windows CPU build b10964, Qwen3-1.7B Q8_0; caller owns both verified downloads.
 
     stdout/stderr are discarded, not written as raw prompt logs. The server runs with
@@ -34,6 +45,7 @@ def local_server(executable: Path, model: Path, port: int) -> Iterator[None]:
     """
     verify_file(executable, SERVER_SHA256)
     verify_file(model, MODEL_SHA256)
+    backend = backend_args(executable, device)
     # Refuse an already occupied port; do not accidentally query another service.
     with socket.socket() as probe:
         if os.name == "nt":
@@ -45,7 +57,7 @@ def local_server(executable: Path, model: Path, port: int) -> Iterator[None]:
         "--offline", "--no-webui", "--jinja", "--reasoning", "off",
         "--ctx-size", "8192", "--parallel", "1", "--n-predict", "512",
         "--threads", "6", "--temp", "0.2", "--seed", "42", "--log-disable",
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ] + backend, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     try:
         deadline = time.monotonic() + 120
