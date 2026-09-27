@@ -8,7 +8,7 @@ are planned, not built; customer savings have not yet been validated. See
 [What this is, precisely](#what-this-is-precisely) below for exactly what that does and
 doesn't mean.
 
-> **Status: pre-MVP, internal, not yet validated on a real workload.** Phase 1 (graph
+> **Status: pre-MVP; local public-source integration tested, customer value unvalidated.** Phase 1 (graph
 > substrate) is done. Phase 2 (ingest + content-free fingerprinting) has met its exit
 > criterion via the JSONL path and has been through five rounds of AI-assisted code
 > review — see [Review history](#review-history) below for exactly what that does and
@@ -17,6 +17,20 @@ doesn't mean.
 > authorized pilot — see [Running this against a real
 > workload](#running-this-against-a-real-workload) for the one currently-supported way to
 > do that.
+
+## Analyze your own supported trace
+
+```powershell
+python -m pip install -e .
+python -m sixeyes analyze examples/structural-change.jsonl
+python -m sixeyes analyze C:\path\to\authorized-session.jsonl --format json
+```
+
+No AgentFuse, GPU, model account or inference spend is required. Input must be one
+authorized session in SixEyes normalized JSONL, not arbitrary provider logs. The command
+rejects unsupported fields and emits a selected structural report with no raw text.
+See [input schema, limits and exit codes](docs/LOCAL_ANALYSIS.md). The included example
+is synthetic; real local-model experiments are recorded in [LOCAL_PILOT.md](docs/LOCAL_PILOT.md).
 
 ## What this is, precisely
 

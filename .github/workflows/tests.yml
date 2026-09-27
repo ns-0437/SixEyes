@@ -28,3 +28,5 @@ jobs:
         run: python -m mypy
       - name: Exercise the offline entry point
         run: python -m pilots.agentfuse --scenario restart --format json
+      - name: Exercise standalone structural analysis
+        run: python -m sixeyes analyze examples/structural-change.jsonl --format json

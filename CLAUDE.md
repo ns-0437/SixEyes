@@ -266,6 +266,17 @@ See `ARCHITECTURE.md` for the node graph and `docs/PHASES.md` for the build plan
 
 ## Current code map and pilot invariants
 
+- `cli.py` / `__main__.py`: owner-facing `python -m sixeyes analyze` command, 1 MiB /
+  1000 requests, one normalized session, no model calls or AgentFuse dependency.
+- `ingest/strict_jsonl.py`: fail-closed CLI intake; unknown fields, coercions, duplicate
+  keys and non-finite numbers are rejected. Legacy permissive JSONL API is unchanged.
+- `ingest/memory.py`: shared construction-bound source moved from the pilot; the old
+  bridge import remains an alias. Preserve nonce identity and content-bearing status.
+- `report.py`: shared selected structural report moved from the pilot; its PilotReport
+  alias remains compatible. Never export raw data, identifiers, keys or full manifests.
+  CLI execution uses an ephemeral key and NullCache. Error text is fixed/line-number-only.
+  CLI exit 3 means insufficient evidence; exit 1 is optional fail-on-change, not proven waste.
+
 - `src/sixeyes/ingest/`: raw, content-bearing types and JSONL import. `tool_choice.py`
   parses the supported Chat Completions modes and named-function shape without coercion.
 - `src/sixeyes/fingerprint/`: HMAC fingerprints and structural comparison. Version 7

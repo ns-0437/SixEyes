@@ -1,0 +1,2 @@
+{"request_id":"example-1","timestamp":1,"model":"example-model","system":"Answer briefly. Revision one.","messages":[{"role":"user","content":"Explain this example."}]}
+{"request_id":"example-2","timestamp":2,"model":"example-model","system":"Answer briefly. Revision two.","messages":[{"role":"user","content":"Explain this example."},{"role":"assistant","content":"A synthetic response."},{"role":"user","content":"Continue."}]}

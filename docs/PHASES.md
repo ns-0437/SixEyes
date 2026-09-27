@@ -5,6 +5,17 @@ No starting phase N+1 with phase N red.
 
 ## Current execution checkpoint — 2026-09-18
 
+**2026-09-27 next workload intake:** `python -m sixeyes analyze` provides a bounded
+owner-facing path independent of AgentFuse and inference. It reuses existing graph
+fingerprinting/comparison with an ephemeral key and NullCache, strict normalized JSONL
+intake, and selected reports. This is the minimum interface needed to evaluate another
+authorized workload, not completion of Phase 6 (which still requires economics/ranking)
+or a new detector. See `LOCAL_ANALYSIS.md`. No new real trace or savings evidence was
+created by the synthetic acceptance fixture; both prior inference budgets remain exhausted.
+Acceptance: 262 tests pass, strict mypy clean; the built wheel analyzed the synthetic
+fixture in an isolated Python process with site packages disabled and no AgentFuse/pilot
+imports. The same CLI smoke command is included in all four CI jobs.
+
 **2026-09-27 owner-approved follow-up:** a separately authorized 10-call/$0 GPU session
 tested whether the incomplete loop made identical read requests. It made one search,
 nine reads, zero repeated read requests, nine unchanged structural comparisons, and

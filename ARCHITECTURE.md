@@ -142,6 +142,13 @@ technical sales conversation. Everything below is explanation, and is labelled a
 
 ## Code structure
 
+The minimal local intake command is `python -m sixeyes analyze` (`cli.py`, `__main__.py`).
+It uses `ingest/strict_jsonl.py` for bounded normalized input, the shared
+`ingest/memory.py` source, then existing Fingerprint and Divergence nodes with NullCache
+and an ephemeral key. `report.py` selects structural fields for stdout; manifests and
+raw traces are never serialized by this command. Pilot imports retain compatibility
+aliases for the moved source/report. This is a pilot intake path, not Phase 6 economics.
+
 ```
 sixeyes/
 ├── CLAUDE.md                  # the 12 rules — read first
@@ -172,6 +179,8 @@ sixeyes/
 │   ├── ingest/                # Phase 2 (JSONL ingest shipped; OTel/SDK adapters pending)
 │   │   ├── types.py           # content-bearing domain model: RawTrace, RawRequest, ...
 │   │   ├── jsonl.py           # zero-instrumentation import path + JsonlSource node
+│   │   ├── strict_jsonl.py    # fail-closed normalized intake for the local CLI
+│   │   ├── memory.py          # construction-bound content-bearing source
 │   │   └── tool_choice.py     # shared strict parser for the supported request control
 │   ├── fingerprint/           # Phase 2 (shipped)
 │   │   ├── types.py           # content-free: RequestFingerprint, DivergenceReport
@@ -182,7 +191,9 @@ sixeyes/
 │   ├── detect/                # Phase 3
 │   ├── econ/                  # Phase 4
 │   ├── remediate/             # Phase 5
-│   └── cli/                   # Phase 6
+│   ├── report.py             # selected structural fields, no raw exports
+│   ├── cli.py                # minimal local analysis; Phase 6 economics still open
+│   └── __main__.py           # python -m sixeyes
 └── tests/
 ```
 
