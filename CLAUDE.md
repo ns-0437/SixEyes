@@ -334,3 +334,11 @@ answer. All six comparisons were `none`; stable structure does not establish tas
 completion. The original ledger has consumed all 10 calls: no further inference under
 that authorization. CLI exit success now also requires adapter completion. See
 `docs/LOCAL_PILOT.md`; do not label this run a successful answer or savings finding.
+
+The owner subsequently authorized one new session of at most 10 local GPU calls at $0,
+limited to the same public source. Its separate ledger is an explicit new authorization,
+not a reset of the exhausted first session. `repo_tools.py` now counts repeated accepted
+read requests using (path, start_line, max_lines) after defaults; it never suppresses
+reads or exports identities. Repeats are observations, not avoidable waste. `local_run.py`
+distinguishes call/output limits, empty final text, escalation and inference failure.
+`finished_with_text` describes termination only; answer quality remains unverified.

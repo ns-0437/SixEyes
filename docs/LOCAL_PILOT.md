@@ -121,3 +121,41 @@ are permitted under this session. The owned server exited and no raw captures or
 were retained. Different behavior across the CPU and GPU runs does not establish its
 cause; a seed alone is not evidence of identical outputs across backends. Stable structural
 prefixes also do not establish useful progress, redundant-tool-call waste, or savings.
+
+### Next experiment: repeated requests and task termination
+
+The owner explicitly approved one additional 10-call local GPU session at $0 on the same
+public AgentFuse source. The original exhausted ledger is unchanged; the new ledger is
+`session-2026-09-27-observations/calls.json` in the local model workspace.
+
+Question: does the tool loop repeat identical read requests, reach a final text response,
+or stop at a limit while its structural comparisons remain unchanged? The previous run's
+six reads cannot answer this: no read identities were retained, and counts alone do not
+establish repetition. Do not retroactively infer them.
+
+The router counts repeated accepted (path, start_line, max_lines) triples after applying
+defaults. One initial read followed by two identical reads yields two repeats. Changed
+ranges, invalid requests, overlapping-but-different ranges and searches do not count.
+Only the count is exported, never paths, arguments, tool output or read identities.
+This is pilot instrumentation outside the detector graph, not a Phase 3 waste detector.
+The workload always executes the requested read; nothing is optimized or suppressed.
+
+`run_outcome` separately describes failure, escalation, call limit, output limit, absence
+of final text, or `finished_with_text`. The last label is not a quality verdict. The
+launcher requires that label and enough captured calls for comparison before exiting
+successfully. A repetition observation alone cannot establish whether a repeated read
+was unnecessary or how much input cost it caused. Useful next decisions require the
+task outcome and the workload owner's assessment, not simply a high repeat count.
+
+**Observed 2026-09-27:** [selected report](results/observed-pilot-2026-09-27.json).
+All 10 attempts were captured: one search, nine reads, zero repeated read requests and
+zero rejected tools. Nine comparisons were `none`. The adapter ended at `max_turns`
+with finish reason `tool_calls`; `run_outcome` was `incomplete_call_limit` and the CLI
+returned 1. No final answer was produced. $0 provider charge; this new ledger is now
+exhausted too. No raw requests, results or completions were retained.
+
+This run does not support identical read requests as the failure explanation. Different
+ranges may still overlap, and useful progress is not determined by request counts.
+Neither cause of failure nor recoverable spend is established. See the
+[experiment decision record](EXPERIMENT_DECISIONS.md) before adding another detector or
+running more calls.

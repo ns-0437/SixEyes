@@ -12,6 +12,22 @@ import pytest
 from pilots.agentfuse.local_client import CallBudget, LocalClient, LocalPilotError
 from pilots.agentfuse.repo_tools import PublicRepoTools
 from pilots.agentfuse.local_runtime import backend_args, verify_file
+from pilots.agentfuse.local_run import run_outcome
+
+
+@pytest.mark.parametrize("status,finish,text,failed,expected", [
+    ("complete", "stop", "answer", False, "finished_with_text"),
+    ("complete", "stop", " \n", False, "incomplete_no_final_text"),
+    ("complete", "length", "cut off", False, "incomplete_output_limit"),
+    ("complete", "unknown", "answer", False, "incomplete_no_final_text"),
+    ("max_turns", "tool_calls", "", False, "incomplete_call_limit"),
+    ("escalated", "stop", "answer", False, "escalated"),
+    ("complete", "stop", "answer", True, "inference_failure"),
+])
+def test_run_outcomes_do_not_mistake_truncation_or_empty_text_for_completion(
+    status: str, finish: str, text: str, failed: bool, expected: str,
+) -> None:
+    assert run_outcome(status, finish, text, failed) == expected
 
 
 def test_cpu_mode_disables_implicit_gpu_selection(tmp_path: Path) -> None:
@@ -161,9 +177,17 @@ def test_router_reads_pinned_blobs_not_local_files(tmp_path: Path, monkeypatch: 
     router = PublicRepoTools(tmp_path)
     assert "monitor.py:1:" in router("search_files", {"query": "class CircuitBreakerMonitor"})
     assert "class CircuitBreakerMonitor" in router("read_file", {"path": "agentfuse/monitor.py"})
+    # Explicit defaults and omitted defaults are the same read request. Different
+    # ranges and rejected requests are not counted as repeats. Nothing is suppressed.
+    again = router("read_file", {"path": "agentfuse/monitor.py", "start_line": 1, "max_lines": 60})
+    assert "class CircuitBreakerMonitor" in again
+    assert router.repeated_read_request_count == 1
+    router("read_file", {"path": "agentfuse/monitor.py", "start_line": 2})
+    assert router.repeated_read_request_count == 1
     for path in (".env", "../outside.py", str(source), "agentfuse/private.py"):
         assert router("read_file", {"path": path}).startswith("ERROR")
     assert "SYNTHETIC" not in router("search_files", {"query": "SYNTHETIC"})
     assert router("write_file", {"path": "agentfuse/monitor.py"}).startswith("ERROR")
     assert router("read_file", {"path": "agentfuse/monitor.py", "max_lines": 10_000}).startswith("ERROR")
     assert source.read_text() == "SYNTHETIC-LOCAL-EDIT"
+    assert router.repeated_read_request_count == 1

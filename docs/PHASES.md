@@ -5,6 +5,15 @@ No starting phase N+1 with phase N red.
 
 ## Current execution checkpoint — 2026-09-18
 
+**2026-09-27 owner-approved follow-up:** a separately authorized 10-call/$0 GPU session
+tested whether the incomplete loop made identical read requests. It made one search,
+nine reads, zero repeated read requests, nine unchanged structural comparisons, and
+stopped at the call limit without an answer. Both authorized ledgers are now exhausted.
+Pilot instrumentation exports counts and fixed termination labels only, with no detector,
+remediation or savings claim. Local verification: 243 tests pass and strict mypy is clean.
+The cause of the incomplete task is still unknown; see `EXPERIMENT_DECISIONS.md` for
+the evidence and next decision. Do not equate stable prefixes with task success.
+
 **2026-09-27 GPU follow-up:** the owner enabled the laptop GPU. A verified Vulkan
 runtime used its RTX 3050 (4 GB). Seven additional calls exhausted the original ten-call
 ledger: one search, six reads, adapter `max_turns`, no final answer. Six comparisons

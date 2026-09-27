@@ -34,6 +34,8 @@ class PublicRepoTools:
         self.repo = repo
         self.search_count = 0
         self.read_count = 0
+        self.repeated_read_request_count = 0
+        self._read_requests: set[tuple[str, int, int]] = set()
         self.rejected_count = 0
         self._files: dict[str, list[str]] = {}
         entries = self._git("ls-tree", "-rz", AGENTFUSE_REVISION, "--", "agentfuse/")
@@ -84,6 +86,10 @@ class PublicRepoTools:
                     type(start) is not int or type(count) is not int or start < 1 or not 1 <= count <= 100):
                 return self._reject()
             self.read_count += 1
+            identity = (requested_path, start, count)
+            if identity in self._read_requests:
+                self.repeated_read_request_count += 1
+            self._read_requests.add(identity)
             rows = [f"{i}: {line}" for i, line in enumerate(self._files[requested_path][start - 1:start - 1 + count], start)]
             text = "\n".join(rows)
             return text[:6_000] + ("\n[output truncated]" if len(text) > 6_000 else "")

@@ -23,6 +23,21 @@ TASK = (
 )
 
 
+def run_outcome(status: str, finish_reason: str | None, content: str, failed: bool) -> str:
+    """Observed termination only; neither answer quality nor avoidable waste."""
+    if failed:
+        return "inference_failure"
+    if status == "max_turns":
+        return "incomplete_call_limit"
+    if status == "escalated":
+        return "escalated"
+    if finish_reason == "length":
+        return "incomplete_output_limit"
+    if status == "complete" and finish_reason == "stop" and content.strip():
+        return "finished_with_text"
+    return "incomplete_no_final_text"
+
+
 async def run(repo: Path, port: int, ledger: Path) -> dict[str, Any]:
     router = PublicRepoTools(repo)
     adapter = load_agentfuse()
@@ -61,11 +76,13 @@ async def run(repo: Path, port: int, ledger: Path) -> dict[str, Any]:
         "run_attempted_calls": budget.used() - before,
         "successful_captured_calls": len(client.captured),
         "search_count": router.search_count, "read_count": router.read_count,
+        "repeated_read_request_count": router.repeated_read_request_count,
         "rejected_tool_count": router.rejected_count,
         "adapter_status": outcome if outcome in {"complete", "max_turns", "escalated"} else "incomplete",
         "finish_reason": client.last_finish_reason,
         "answer_mentions_target": "CircuitBreakerMonitor" in final_content,
         "answer_quality_verified": False,
+        "run_outcome": run_outcome(outcome, client.last_finish_reason, final_content, failure is not None),
         "failure": failure,
         "structural_report": report.to_dict(),
         "evidence_limit": "Local plumbing validation only; no paid-provider cache-hit, savings or demand evidence.",
@@ -90,7 +107,7 @@ def main() -> int:
     return 0 if (
         result["failure"] is None
         and result["successful_captured_calls"] >= 2
-        and result["adapter_status"] == "complete"
+        and result["run_outcome"] == "finished_with_text"
     ) else 1
 
 
